@@ -12,19 +12,10 @@ import sys
 import threading
 
 from dotenv import load_dotenv
-
-# Load .env from the project root (one level above app/)
 load_dotenv()
 
 
 class _Settings:
-    """
-    Runtime-mutable settings backed by environment variables.
-
-    Thresholds (similarity, BM25, cross-encoder) can be updated at runtime
-    via the /config endpoint for the live dashboard slider demo.
-    All mutations are guarded by a threading.Lock.
-    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -39,11 +30,10 @@ class _Settings:
             )
             sys.exit(1)
 
-        # --- Optional with defaults ---
         self.groq_model: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
         self.cache_persist_path: str = os.getenv("CACHE_PERSIST_PATH", "./cache_store.db")
 
-        # --- Mutable thresholds (guarded by _lock) ---
+        # --- Mutable thresholds (guarded by lock) ---
         self._similarity_threshold: float = float(
             os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.85")
         )
@@ -54,10 +44,7 @@ class _Settings:
             os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.5")
         )
 
-        # --- Per-call cost estimate for "dollars saved" metric ---
         self.estimated_cost_per_call: float = 0.03
-
-    # -- Thread-safe property accessors for mutable thresholds --
 
     @property
     def similarity_threshold(self) -> float:
@@ -89,6 +76,4 @@ class _Settings:
         with self._lock:
             self._crossencoder_min_score = value
 
-
-# Singleton — created once at import time, shared by all modules.
 settings = _Settings()

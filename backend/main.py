@@ -28,33 +28,21 @@ from backend.config import settings
 from backend.llm_client import GroqAPIError, call_groq
 from backend.verification import decide_cache_hit, embed_text
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
 logger = logging.getLogger("semantic_cache")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
 
-# ---------------------------------------------------------------------------
-# Application state (module-level singletons)
-# ---------------------------------------------------------------------------
-
 store: CacheStore | None = None
 
-
 class _Stats:
-    """In-memory running totals for the /stats endpoint."""
-
     def __init__(self) -> None:
         self.total_requests: int = 0
         self.cache_hits: int = 0
         self.cache_misses: int = 0
         self.total_hit_latency_ms: float = 0.0
         self.total_miss_latency_ms: float = 0.0
-        # Rolling log of the last 20 queries for the dashboard.
         self.recent_queries: list[dict[str, Any]] = []
 
     @property
@@ -80,19 +68,12 @@ class _Stats:
 
 stats = _Stats()
 
-# ---------------------------------------------------------------------------
-# Pydantic request / response models
-# ---------------------------------------------------------------------------
-
-
 class ChatMessage(BaseModel):
     role: str
     content: str
 
-
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1)
-
 
 class ChatResponse(BaseModel):
     answer: str
@@ -132,12 +113,6 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
 
-
-# ---------------------------------------------------------------------------
-# Application lifecycle
-# ---------------------------------------------------------------------------
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: validate config, load persisted cache. Shutdown: close DB."""
@@ -163,11 +138,6 @@ async def lifespan(app: FastAPI):
     store.close()
     logger.info("Cache store closed.")
 
-
-# ---------------------------------------------------------------------------
-# FastAPI app
-# ---------------------------------------------------------------------------
-
 app = FastAPI(
     title="Semantic-Shift",
     description="Semantic cache proxy with 3-layer verification for LLM APIs.",
@@ -175,8 +145,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow requests from any origin (dashboard is served from same origin,
-# but keeping this open for external tools / testing).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -185,33 +153,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# Dashboard — serve the single-page HTML app
-# ---------------------------------------------------------------------------
-
 _DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
-
-
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def serve_dashboard() -> HTMLResponse:
     """Serve the dashboard SPA from the root URL."""
     return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat_completions(request: ChatRequest) -> ChatResponse:
-    """
-    Main proxy endpoint — OpenAI-compatible shape.
-
-    Flow: extract last user message → decide_cache_hit() →
-      on hit: return cached answer
-      on miss: call Groq, store the new entry, return fresh answer
-    """
-    # Extract the last user message for cache lookup (spec §7 — v1 limitation).
     last_user_msg = None
     for msg in reversed(request.messages):
         if msg.role == "user":
@@ -228,11 +177,8 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
 
     start = time.perf_counter()
 
-    # --- Cache check ---
     hit_entry, debug = decide_cache_hit(last_user_msg, store)
-
     if hit_entry is not None:
-        # Cache HIT
         latency_ms = (time.perf_counter() - start) * 1000
         stats.total_requests += 1
         stats.cache_hits += 1
@@ -254,7 +200,6 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
             debug=debug,
         )
 
-    # --- Cache MISS — call Groq ---
     try:
         answer = call_groq(last_user_msg)
     except GroqAPIError as exc:
@@ -271,7 +216,6 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
                 "error": exc.body,
             }
         )
-        # Return a proper 502 with JSON error body — don't crash the server.
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
@@ -282,7 +226,6 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
             },
         )
 
-    # Store the new entry (writes to SQLite + appends to in-memory list).
     query_embedding = embed_text(last_user_msg)
     store.add(last_user_msg, query_embedding, answer)
 

@@ -19,11 +19,6 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from backend.cache_store import CacheEntry, CacheStore
 from backend.config import settings
 
-# ---------------------------------------------------------------------------
-# Model singletons — loaded lazily on first use to avoid slow imports at
-# module level. Once loaded they stay in memory for the process lifetime.
-# ---------------------------------------------------------------------------
-
 _embedding_model: SentenceTransformer | None = None
 _crossencoder_model: CrossEncoder | None = None
 
@@ -43,12 +38,6 @@ def _get_crossencoder() -> CrossEncoder:
         _crossencoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     return _crossencoder_model
 
-
-# ---------------------------------------------------------------------------
-# Embedding
-# ---------------------------------------------------------------------------
-
-
 def embed_text(text: str) -> list[float]:
     """
     Compute the dense embedding for a single string.
@@ -64,8 +53,6 @@ def embed_text(text: str) -> list[float]:
 # ---------------------------------------------------------------------------
 # Layer 1 — BM25 pre-filter
 # ---------------------------------------------------------------------------
-
-
 def _tokenize(text: str) -> list[str]:
     """Simple whitespace + lowercase tokenizer for BM25."""
     return text.lower().split()
@@ -110,8 +97,6 @@ def bm25_prefilter(
 # ---------------------------------------------------------------------------
 # Layer 2 — Cosine similarity
 # ---------------------------------------------------------------------------
-
-
 def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     """
     Compute cosine similarity between two vectors.
@@ -162,8 +147,6 @@ def _find_best_cosine_match(
 # ---------------------------------------------------------------------------
 # Layer 3 — Cross-encoder re-check
 # ---------------------------------------------------------------------------
-
-
 def crossencoder_score(query: str, candidate_text: str) -> float:
     """
     Run the cross-encoder on a (query, candidate) pair.
@@ -181,8 +164,6 @@ def crossencoder_score(query: str, candidate_text: str) -> float:
 # ---------------------------------------------------------------------------
 # Orchestrator — decide_cache_hit
 # ---------------------------------------------------------------------------
-
-
 def decide_cache_hit(
     query: str, store: CacheStore
 ) -> tuple[CacheEntry | None, dict[str, Any]]:

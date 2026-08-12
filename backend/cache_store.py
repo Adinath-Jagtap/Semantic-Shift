@@ -18,8 +18,6 @@ from dataclasses import dataclass
 
 @dataclass
 class CacheEntry:
-    """A single cached (query, answer) pair with its precomputed embedding."""
-
     id: int
     query_text: str
     embedding: list[float]
@@ -85,13 +83,6 @@ class CacheStore:
         return entries
 
     def add(self, query_text: str, embedding: list[float], answer: str) -> CacheEntry:
-        """
-        Persist a new cache entry to SQLite and append it to the in-memory list.
-
-        Uses parameterized SQL (? placeholders) — never string-formatted queries.
-        Commits immediately so the row survives a crash.
-        Returns the newly created CacheEntry.
-        """
         created_at = time.time()
         embedding_json = json.dumps(embedding)
 
@@ -111,9 +102,7 @@ class CacheStore:
         return entry
 
     def all_entries(self) -> list[CacheEntry]:
-        """Return the in-memory entry list for the verification layer to scan."""
         return self.entries
 
     def close(self) -> None:
-        """Close the underlying SQLite connection."""
         self._conn.close()
