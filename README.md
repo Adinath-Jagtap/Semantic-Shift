@@ -10,6 +10,10 @@ A caching proxy that sits in front of an LLM API (Groq) and uses a **three-layer
 
 ---
 
+**🌐 Live Demo:** [https://semantic-shift.syntaxsyndicate.co.in](https://semantic-shift.syntaxsyndicate.co.in/)
+
+---
+
 ## ✨ Key Features
 
 - **3-Layer Semantic Verification** — BM25 keyword pre-filter → Cosine Similarity → Cross-Encoder re-ranking
@@ -81,8 +85,8 @@ User Query
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/your-username/semantic-shift.git
-cd semantic-shift
+git clone https://github.com/Adinath-Jagtap/Semantic-Shift.git
+cd Semantic-Shift
 
 python -m venv .venv
 # Windows:
