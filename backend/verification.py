@@ -30,13 +30,29 @@ logger = logging.getLogger("semantic_cache")
 # once, and every request is fast.
 # ---------------------------------------------------------------------------
 
-logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
-_embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-logger.info("Embedding model loaded.")
+_embedding_model = None
+_crossencoder_model = None
 
-logger.info("Loading cross-encoder (cross-encoder/quora-distilroberta-base)...")
-_crossencoder_model = CrossEncoder("cross-encoder/quora-distilroberta-base")
-logger.info("Cross-encoder loaded.")
+def _get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        logger.info("Embedding model loaded.")
+    return _embedding_model
+
+def _get_crossencoder():
+    global _crossencoder_model
+    if _crossencoder_model is None:
+        logger.info("Loading cross-encoder (cross-encoder/quora-distilroberta-base)...")
+        _crossencoder_model = CrossEncoder("cross-encoder/quora-distilroberta-base")
+        logger.info("Cross-encoder loaded.")
+    return _crossencoder_model
+
+def preload_models() -> None:
+    """Triggered in a background thread post-startup so first user query doesn't hang."""
+    _get_embedding_model()
+    _get_crossencoder()
 
 # ---------------------------------------------------------------------------
 # Embedding cache — avoids redundant model.encode() calls for the same text.
@@ -57,7 +73,8 @@ def embed_text(text: str) -> np.ndarray:
     if cached is not None:
         return cached
 
-    vector = _embedding_model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+    model = _get_embedding_model()
+    vector = model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
     _embedding_cache[text] = vector
     return vector
 
@@ -192,7 +209,8 @@ def crossencoder_score(query: str, candidate_text: str) -> float:
     Returns a float score — higher means more semantically similar.
     The STS-B model outputs on a [0, 5] scale.
     """
-    score = _crossencoder_model.predict([(query, candidate_text)])
+    model = _get_crossencoder()
+    score = model.predict([(query, candidate_text)])
     return float(score[0])
 
 
