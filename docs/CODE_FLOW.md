@@ -37,8 +37,8 @@ This document maps every module, every function, its inputs/outputs, where it's 
    │  │  │          └─────────────────┘
    │  │  │
    │  │  └── Layer 3: crossencoder_score()
-   │  └───── Layer 2: _find_best_cosine_match() → cosine_similarity()
-   └──────── Layer 1: bm25_prefilter()
+   │  └───── Layer 2: bm25_prefilter()
+   └──────── Layer 1: _vectorized_cosine_all() → cosine_similarity()
 ```
 
 ---
@@ -55,9 +55,9 @@ This document maps every module, every function, its inputs/outputs, where it's 
 | `groq_api_key` | `str` | The Groq API key (never logged, never returned in responses) |
 | `groq_model` | `str` | LLM model name, default `llama-3.1-8b-instant` |
 | `cache_persist_path` | `str` | SQLite file path, default `./cache_store.db` |
-| `similarity_threshold` | `float` (property) | Thread-safe getter/setter, default `0.76` |
+| `similarity_threshold` | `float` (property) | Thread-safe getter/setter, default `0.72` |
 | `bm25_min_overlap` | `float` (property) | Thread-safe getter/setter, default `0.3` |
-| `crossencoder_min_score` | `float` (property) | Thread-safe getter/setter, default `0.5` |
+| `crossencoder_min_score` | `float` (property) | Thread-safe getter/setter, default `0.25` |
 | `estimated_cost_per_call` | `float` | Fixed at `$0.03` for "dollars saved" metric |
 
 ### `settings` (module-level singleton)
@@ -150,11 +150,11 @@ CREATE TABLE IF NOT EXISTS cache_entries (
 | Function | Signature | Layer | Description | Called By |
 |---|---|---|---|---|
 | `embed_text` | `(text: str) → np.ndarray` | In-memory cache | Computes 384-dim L2-normalized embedding, cached per query text | `main.py` (on miss, to store), `decide_cache_hit` (for query) |
-| `_tokenize` | `(text: str) → list[str]` | — | Lowercase whitespace tokenizer | `bm25_prefilter` |
-| `bm25_prefilter` | `(query, entries) → list[tuple[CacheEntry, float]]` | 1 | BM25Okapi scoring, threshold filter, top-3 fallback | `decide_cache_hit` |
-| `cosine_similarity` | `(vec_a, vec_b) → float` | — | Manual dot-product cosine, returns [-1, 1] | `_find_best_cosine_match` |
-| `_find_best_cosine_match` | `(query_emb, candidates) → (entry, score, all_scores)` | 2 | Finds highest cosine match among BM25 candidates | `decide_cache_hit` |
-| `crossencoder_score` | `(query, candidate_text) → float` | 3 | Cross-encoder pairwise re-ranking score | `decide_cache_hit` |
+| `_normalize_query` | `(text: str) → str` | — | Aggressive string normalization | `_exact_match`, `_char_similarity` |
+| `_char_similarity` | `(a: str, b: str) → float` | 0 | SequenceMatcher character-level overlap for typos | `decide_cache_hit` |
+| `_vectorized_cosine_all` | `(query_emb, candidates) → (indices, scores)` | 1 | Vectorized np.dot against all entries | `decide_cache_hit` |
+| `bm25_prefilter` | `(query, entries) → list[tuple[CacheEntry, float]]` | 2 | BM25Okapi scoring as a sanity check | `decide_cache_hit` |
+| `crossencoder_score` | `(query, candidate_text) → float` | 3 | Cross-encoder pairwise re-ranking score (cached) | `decide_cache_hit` |
 | `decide_cache_hit` | `(query, store) → (CacheEntry\|None, debug_dict)` | ALL | Orchestrates the full pipeline | `main.py` |
 
 ### `decide_cache_hit` — Complete Flow
@@ -165,21 +165,24 @@ Input: query (str), store (CacheStore)
   ├─ store.all_entries() → entries
   │    └─ Empty? → return (None, {"reason": "empty_cache"})
   │
-  ├─ Layer 1: bm25_prefilter(query, entries)
-  │    ├─ Tokenize all cached queries
-  │    ├─ BM25Okapi.get_scores()
-  │    ├─ Normalize to [0, 1]
-  │    ├─ Filter: score >= BM25_MIN_OVERLAP
-  │    └─ Fallback: top-3 if none pass
-  │         → bm25_candidates
+  ├─ Layer 0: Exact match + Typo match
+  │    ├─ _exact_match() → HIT if found
+  │    └─ Character fuzzy fallback if cosine misses later
   │
   ├─ embed_text(query) → query_embedding  [computed ONCE]
   │
-  ├─ Layer 2: _find_best_cosine_match(query_embedding, bm25_candidates)
-  │    ├─ cosine_similarity() for each candidate
+  ├─ Layer 1: _vectorized_cosine_all(query_embedding, entries)
+  │    ├─ Vectorized matrix multiply for all candidates
   │    ├─ Select best match
   │    └─ best_sim < SIMILARITY_THRESHOLD?
-  │         → return (None, {"reason": "no_similarity_match", ...})
+  │         → Check _char_similarity for typo > 0.85
+  │         → return hit or miss
+  │
+  ├─ best_sim >= 0.88?
+  │    └─ High-confidence HIT, skip BM25 and Cross-encoder
+  │
+  ├─ Layer 2: bm25_prefilter(query, entries)
+  │    └─ Sanity check for borderline matches, adds to debug info
   │
   ├─ Layer 3: crossencoder_score(query, best_entry.query_text)
   │    └─ ce_score < CROSSENCODER_MIN_SCORE?
@@ -388,11 +391,10 @@ All logic runs in a single IIFE (`(function(){ ... })()`). Key functions:
 3. Last user message extracted from messages list
 4. decide_cache_hit(query, store) called in backend/verification.py
    a. store.all_entries() returns in-memory list from cache_store.py
-   b. bm25_prefilter() tokenizes and scores (Layer 1)
-   c. embed_text() computes query embedding via sentence-transformers
-   d. _find_best_cosine_match() scores candidates (Layer 2)
-   e. crossencoder_score() re-ranks best match (Layer 3)
-   f. Returns (entry_or_None, debug_dict)
+   b. _vectorized_cosine_all() scores all candidates (Layer 1)
+   c. bm25_prefilter() runs sanity check if borderline (Layer 2)
+   d. crossencoder_score() re-ranks best match (Layer 3)
+   e. Returns (entry_or_None, debug_dict, embedding)
 5. If HIT: return cached answer immediately
 6. If MISS:
    a. call_groq(query) in backend/llm_client.py → Groq API

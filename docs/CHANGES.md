@@ -377,3 +377,41 @@ Server startup is the right time to pay a one-time cost. The user expects `uvico
 | First request after restart | ~10,000ms | Same as normal (models pre-loaded) |
 
 > **Physical limit:** A single `model.encode()` call on CPU takes ~50ms. This is the floor for any NEW paraphrase query that hasn't been seen before. The only way below 50ms for novel paraphrases is GPU acceleration or a smaller/distilled model.
+
+---
+
+## Change 11: Vectorized Cosine Similarity First
+
+**File:** `backend/verification.py`
+
+### Why was this necessary?
+Previously, BM25 was run first to pre-filter candidates before computing cosine similarity. However, BM25 was sometimes overly restrictive, and we realized that computing cosine similarity across all candidates is actually *faster* when fully vectorized.
+
+### Logical reasoning
+By using `np.vstack` to pre-stack all candidate embeddings and `np.dot` to compare the query against the entire matrix simultaneously, the similarity scoring takes `< 0.01ms`. It is so fast that it should be Layer 1, making BM25 an optional sanity check (Layer 2) rather than a strict pre-filter.
+
+---
+
+## Change 12: Fuzzy Typo Matching Fallback
+
+**File:** `backend/verification.py`
+
+### Why was this necessary?
+The embedding model (`all-MiniLM-L6-v2`) handles semantic paraphrases well, but fails completely on character-level typos (e.g. `pythn` instead of `python`). When a user typed `how do i deploy a pythn app to aws lamda`, the cosine similarity dropped below the threshold and caused a cache miss.
+
+### Logical reasoning
+We introduced a character-level similarity check using Python's built-in `difflib.SequenceMatcher`. If a query fails the cosine similarity threshold, we check if it has >85% character overlap with any cached query. If it does, it's almost certainly a typo, and we return a cache hit.
+
+---
+
+## Change 13: Lowered Cross-Encoder Threshold
+
+**File:** `backend/config.py`
+
+```diff
+- CACHE_CROSSENCODER_MIN_SCORE = 0.5
++ CACHE_CROSSENCODER_MIN_SCORE = 0.25
+```
+
+### Why was this necessary?
+The cross-encoder correctly identifies strict duplicates with scores > 0.5. However, for queries involving abbreviations (e.g., "difference between ML and deep learning" vs "difference between machine learning and deep learning"), the cross-encoder score would dip to ~0.35. A threshold of 0.5 incorrectly rejected these valid semantic matches. Lowering to 0.25 captures these abbreviation variations while still strictly rejecting different intents (which reliably score < 0.1).

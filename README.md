@@ -5,7 +5,7 @@
 A caching proxy that sits in front of an LLM API (Groq) and uses a **four-layer verification pipeline** to decide whether a new query can safely reuse a cached answer. Unlike naive string-matching caches, this system understands that _"How do I reset my password?"_ and _"What are the steps to recover my password?"_ mean the same thing — while correctly rejecting _"How do I delete my account?"_ even though it shares 80 % of the same words.
 
 <p align="center">
-  <img src="semantic_cache_architecture.png" alt="Semantic-Shift Architecture" width="700" />
+  <img src="docs/semantic_cache_architecture.png" alt="Semantic-Shift Architecture" width="700" />
 </p>
 
 ---
@@ -35,20 +35,20 @@ User Query
 │                                                                          │
 │   ┌──────────────┐                                                       │
 │   │  Layer 0      │                                                       │
-│   │  Exact Match  │  ── string match ──▶  INSTANT HIT (< 1ms)           │
-│   │  (string)     │                                                       │
+│   │  Exact & Typo │  ── string/char match ──▶  INSTANT HIT (< 1ms)      │
+│   │  Match        │                                                       │
 │   └──────┬───────┘                                                       │
 │          │ no match                                                       │
 │          ▼                                                                │
 │   ┌──────────────┐    ┌──────────────────┐    ┌───────────────────────┐  │
 │   │  Layer 1      │    │  Layer 2          │    │  Layer 3               │  │
-│   │  BM25         │ ──▶│  Cosine           │ ──▶│  Cross-Encoder         │  │
-│   │  Pre-filter   │    │  Similarity       │    │  Re-ranking            │  │
-│   │  (keyword)    │    │  (embedding)      │    │  (intent matching)     │  │
+│   │  Cosine       │ ──▶│  BM25             │ ──▶│  Cross-Encoder         │  │
+│   │  Similarity   │    │  Sanity Check     │    │  Re-ranking            │  │
+│   │  (embedding)  │    │  (keyword)        │    │  (intent matching)     │  │
 │   └──────────────┘    └──────────────────┘    └───────────────────────┘  │
 │         │                     │                        │                  │
-│    Narrows pool         Picks best match        Confirms intent           │
-│    (100 → ~5)           (threshold: 0.76)       (catches traps)          │
+│    Fast vector match    Confirms overlap        Confirms intent           │
+│    (threshold: 0.72)    for borderline cases    (catches traps)          │
 │                                                                          │
 │   ┌──────────────┐    ┌──────────────────┐                               │
 │   │  Groq LLM    │    │  SQLite Cache     │                               │
@@ -58,28 +58,22 @@ User Query
     │
     ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│              Streamlit Dashboard (dashboard/app.py)                       │
-│                                                                          │
-│   ┌──────────────┐  ┌───────────────┐  ┌──────────────────────────────┐ │
-│   │ Query Tester │  │  Dashboard    │  │  Settings (threshold         │ │
-│   │              │  │  (KPIs +      │  │  sliders + live status)      │ │
-│   │              │  │  query log)   │  │                              │ │
-│   └──────────────┘  └───────────────┘  └──────────────────────────────┘ │
+│              Streamlit/HTML Dashboard (frontend/index.html)               │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Why Four Layers?
 
-| Layer                           | Algorithm                                          | Speed    | Purpose                                                                                                      |
-| ------------------------------- | -------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| **Layer 0** — Exact Match       | Case-insensitive string comparison                 | < 0.1ms  | Instant return for identical queries. No ML involved.                                                        |
-| **Layer 1** — BM25              | Keyword overlap (TF-IDF)                           | ~1-5ms   | Cheaply eliminates irrelevant entries. Narrows 100+ entries to ~3-5 candidates.                              |
-| **Layer 2** — Cosine Similarity | `all-MiniLM-L6-v2` embeddings (384-dim, L2-norm)  | ~50ms    | Finds the semantically closest match. Uses numpy dot product on normalized vectors.                          |
-| **Layer 3** — Cross-Encoder     | `quora-distilroberta-base` pairwise scoring        | ~200ms   | Confirms **intent** equivalence — not just topic similarity. Catches "roadmap for X" vs "what is X" traps.   |
+| Layer                           | Algorithm                                        | Speed    | Purpose                                                                                                     |
+| ------------------------------- | ------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------- |
+| **Layer 0** — Exact/Typo Match  | Normalized string compare & SequenceMatcher      | < 1ms    | Instant return for identical queries or minor typos (`pythn` → `python`). No ML involved.                   |
+| **Layer 1** — Cosine Similarity | `all-MiniLM-L6-v2` embeddings (384-dim, L2-norm) | ~10-40ms | Vectorized `np.dot` finds the semantically closest match instantly among all cached entries.                |
+| **Layer 2** — BM25              | Keyword overlap (TF-IDF)                         | ~1-5ms   | Sanity check for borderline cosine scores. Confirms vocabulary overlap before expensive cross-encoder step. |
+| **Layer 3** — Cross-Encoder     | `quora-distilroberta-base` pairwise scoring      | ~200ms   | Confirms **intent** equivalence — not just topic similarity. Catches "roadmap for X" vs "what is X" traps.  |
 
-**Layer 3 is selectively skipped** when cosine similarity > 0.92 (near-identical queries where false positives are essentially impossible), saving ~200ms on high-confidence matches.
+**Layer 3 is selectively skipped** when cosine similarity >= 0.88 (high-confidence queries where false positives are essentially impossible), saving ~200ms.
 
-**Total complexity:** O(n) cheap + O(1) expensive = **fast AND accurate**.
+**Total complexity:** Vectorized numpy operations + fallback ML = **fast AND accurate**.
 
 ---
 
@@ -136,11 +130,13 @@ The server will:
 **Option A — Built-in Dashboard:** Navigate to **http://localhost:8000** in your browser.
 
 **Option B — Streamlit Dashboard (richer UI):**
+
 ```bash
 # In a second terminal:
 cd dashboard
 streamlit run app.py
 ```
+
 Navigate to **http://localhost:8501**.
 
 ### 5. Run Tests
@@ -173,13 +169,13 @@ This is what naive string-matching or single-layer embedding caches get wrong.
 
 ## Latency Breakdown
 
-| Scenario | Latency | Path | Speedup vs LLM |
-|---|---|---|---|
-| Exact same query repeated | **< 1ms** | Layer 0 (string match) | ~2000x |
-| Paraphrase, repeated | **< 5ms** | Embedding cache hit + numpy dot | ~400x |
-| Paraphrase, high confidence (cosine > 0.92) | **~40ms** | Embed + cosine (CE skipped) | ~30x |
-| Paraphrase, first time (full pipeline) | **~130ms** | Embed + cosine + cross-encoder | ~10x |
-| Cache miss | **~1-2s** | Embed once + Groq API call | 1x (baseline) |
+| Scenario                                     | Latency        | Path                                  | Speedup vs LLM |
+| -------------------------------------------- | -------------- | ------------------------------------- | -------------- |
+| Exact or typo match                          | **< 1ms**      | Layer 0 (string/char match)           | ~2000x         |
+| Paraphrase, repeated                         | **< 5ms**      | Embedding cache hit + numpy dot       | ~400x          |
+| Paraphrase, high confidence (cosine >= 0.88) | **~15-45ms**   | Embed + cosine (CE skipped)           | ~30x           |
+| Paraphrase, first time (borderline pipeline) | **~130-200ms** | Embed + cosine + BM25 + cross-encoder | ~10x           |
+| Cache miss                                   | **~1-2s**      | Embed once + Groq API call            | 1x (baseline)  |
 
 > **Note:** Semantic match latency (~40-130ms) is bounded by CPU neural network inference. A GPU would bring this under 5ms. Even on CPU, cache hits are **10-30x faster** than calling the LLM.
 
@@ -187,14 +183,14 @@ This is what naive string-matching or single-layer embedding caches get wrong.
 
 ## Environment Variables
 
-| Variable                       | Default                | Description                                |
-| ------------------------------ | ---------------------- | ------------------------------------------ |
-| `GROQ_API_KEY`                 | _(required)_           | Your Groq API key                          |
-| `GROQ_MODEL`                   | `llama-3.1-8b-instant` | LLM model to use                           |
-| `CACHE_SIMILARITY_THRESHOLD`   | `0.76`                 | Min cosine similarity for Layer 2          |
-| `CACHE_BM25_MIN_OVERLAP`       | `0.3`                  | Min normalized BM25 score for Layer 1      |
-| `CACHE_CROSSENCODER_MIN_SCORE` | `0.5`                  | Min cross-encoder score for Layer 3        |
-| `CACHE_PERSIST_PATH`           | `./cache_store.db`     | SQLite database file path                  |
+| Variable                       | Default                | Description                           |
+| ------------------------------ | ---------------------- | ------------------------------------- |
+| `GROQ_API_KEY`                 | _(required)_           | Your Groq API key                     |
+| `GROQ_MODEL`                   | `llama-3.1-8b-instant` | LLM model to use                      |
+| `CACHE_SIMILARITY_THRESHOLD`   | `0.72`                 | Min cosine similarity for Layer 1     |
+| `CACHE_BM25_MIN_OVERLAP`       | `0.3`                  | Min normalized BM25 score for Layer 2 |
+| `CACHE_CROSSENCODER_MIN_SCORE` | `0.25`                 | Min cross-encoder score for Layer 3   |
+| `CACHE_PERSIST_PATH`           | `./cache_store.db`     | SQLite database file path             |
 
 All thresholds can also be **tuned live** from the dashboard settings panel without restarting the server.
 
@@ -253,19 +249,19 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ## Tech Stack
 
-| Technology                                            | Purpose                                                |
-| ----------------------------------------------------- | ------------------------------------------------------ |
-| **FastAPI** + **uvicorn**                             | High-performance async API server                      |
-| **sentence-transformers** (`all-MiniLM-L6-v2`)        | 384-dim L2-normalized semantic embeddings              |
-| **sentence-transformers** (`quora-distilroberta-base`) | Cross-encoder for duplicate question detection         |
-| **rank-bm25** (`BM25Okapi`)                           | Keyword overlap pre-filtering                          |
-| **numpy**                                             | Vectorized dot product for sub-microsecond cosine sim  |
-| **Groq SDK**                                          | Ultra-low-latency LLM inference (LPU hardware)         |
-| **SQLite**                                            | Zero-dependency persistent cache with ACID guarantees  |
-| **Streamlit**                                         | Dashboard UI with live threshold sliders               |
-| **python-dotenv**                                     | Environment variable loading                           |
-| **pydantic**                                          | Request/response validation                            |
-| **pytest**                                            | Test framework                                         |
+| Technology                                             | Purpose                                               |
+| ------------------------------------------------------ | ----------------------------------------------------- |
+| **FastAPI** + **uvicorn**                              | High-performance async API server                     |
+| **sentence-transformers** (`all-MiniLM-L6-v2`)         | 384-dim L2-normalized semantic embeddings             |
+| **sentence-transformers** (`quora-distilroberta-base`) | Cross-encoder for duplicate question detection        |
+| **rank-bm25** (`BM25Okapi`)                            | Keyword overlap pre-filtering                         |
+| **numpy**                                              | Vectorized dot product for sub-microsecond cosine sim |
+| **Groq SDK**                                           | Ultra-low-latency LLM inference (LPU hardware)        |
+| **SQLite**                                             | Zero-dependency persistent cache with ACID guarantees |
+| **Streamlit**                                          | Dashboard UI with live threshold sliders              |
+| **python-dotenv**                                      | Environment variable loading                          |
+| **pydantic**                                           | Request/response validation                           |
+| **pytest**                                             | Test framework                                        |
 
 ---
 
@@ -316,15 +312,15 @@ semantic-cache/
 
 ## Performance Optimizations
 
-| Optimization | What | Impact |
-|---|---|---|
-| Exact-match short-circuit | Layer 0 string comparison before any ML | < 1ms for repeated queries |
-| Embedding cache | In-memory dict avoids redundant `model.encode()` | < 0.01ms for cached embeddings |
-| Warm cache at startup | Pre-populates embedding cache from SQLite | First request after restart is fast |
-| L2-normalized embeddings | Cosine sim = `np.dot()` (one C call) | ~100x faster than Python loop |
-| Selective cross-encoder | Only runs for borderline cosine scores (0.76–0.92) | Saves ~200ms on confident matches |
-| Reuse embedding on miss | `decide_cache_hit()` returns computed embedding | Avoids duplicate `embed_text()` call |
-| Eager model loading | Models load at server startup, not first request | No cold-start spike |
+| Optimization              | What                                               | Impact                               |
+| ------------------------- | -------------------------------------------------- | ------------------------------------ |
+| Exact-match short-circuit | Layer 0 string comparison before any ML            | < 1ms for repeated queries           |
+| Embedding cache           | In-memory dict avoids redundant `model.encode()`   | < 0.01ms for cached embeddings       |
+| Warm cache at startup     | Pre-populates embedding cache from SQLite          | First request after restart is fast  |
+| L2-normalized embeddings  | Cosine sim = `np.dot()` (one C call)               | ~100x faster than Python loop        |
+| Selective cross-encoder   | Only runs for borderline cosine scores (0.76–0.92) | Saves ~200ms on confident matches    |
+| Reuse embedding on miss   | `decide_cache_hit()` returns computed embedding    | Avoids duplicate `embed_text()` call |
+| Eager model loading       | Models load at server startup, not first request   | No cold-start spike                  |
 
 ---
 

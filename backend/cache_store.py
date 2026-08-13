@@ -70,6 +70,10 @@ class CacheStore:
         # Load all existing rows into memory on startup.
         self.entries: list[CacheEntry] = self._load_all()
 
+        # Version counter — incremented on every add().
+        # Verification module uses this to know when to rebuild BM25/matrix.
+        self.version: int = 0
+
     def _load_all(self) -> list[CacheEntry]:
         """Read every row from SQLite into CacheEntry objects."""
         cursor = self._conn.execute(_SELECT_ALL_SQL)
@@ -108,6 +112,7 @@ class CacheStore:
             created_at=created_at,
         )
         self.entries.append(entry)
+        self.version += 1
         return entry
 
     def all_entries(self) -> list[CacheEntry]:

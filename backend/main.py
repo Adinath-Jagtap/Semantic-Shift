@@ -183,8 +183,11 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
     start = time.perf_counter()
 
     hit_entry, debug, query_embedding = decide_cache_hit(last_user_msg, store)
+    cache_decision_ms = (time.perf_counter() - start) * 1000
+    debug["cache_decision_ms"] = round(cache_decision_ms, 2)
+
     if hit_entry is not None:
-        latency_ms = (time.perf_counter() - start) * 1000
+        latency_ms = cache_decision_ms  # HIT = cache decision only, no LLM call.
         stats.total_requests += 1
         stats.cache_hits += 1
         stats.total_hit_latency_ms += latency_ms
@@ -232,11 +235,10 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
             },
         )
 
-    # Reuse the embedding from decide_cache_hit if available,
-    # otherwise compute it now (only happens when cache was empty).
     if query_embedding is None:
         query_embedding = embed_text(last_user_msg)
     store.add(last_user_msg, query_embedding, answer)
+    debug["llm_call_ms"] = round((time.perf_counter() - start) * 1000 - cache_decision_ms, 2)
 
     latency_ms = (time.perf_counter() - start) * 1000
 

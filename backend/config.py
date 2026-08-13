@@ -35,13 +35,13 @@ class _Settings:
 
         # --- Mutable thresholds (guarded by lock) ---
         self._similarity_threshold: float = float(
-            os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.76")
+            os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.72")
         )
         self._bm25_min_overlap: float = float(
             os.getenv("CACHE_BM25_MIN_OVERLAP", "0.3")
         )
         self._crossencoder_min_score: float = float(
-            os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.5")
+            os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.25")
         )
 
         self.estimated_cost_per_call: float = 0.03
