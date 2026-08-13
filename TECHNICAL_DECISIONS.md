@@ -30,6 +30,7 @@ This document explains **why** each technical decision was made — the librarie
 | **uvicorn** | 0.34.0 | ASGI server | The canonical server for FastAPI. The `[standard]` extra adds `uvloop` and `httptools` for better performance. |
 | **sentence-transformers** | 3.3.1 | Embeddings + cross-encoder | Single library provides both the bi-encoder (embeddings) and cross-encoder (re-ranking). Hugging Face ecosystem, well-maintained, battle-tested. |
 | **rank-bm25** | 0.2.2 | BM25 keyword scoring | Minimal, pure-Python BM25Okapi implementation. No heavy dependencies. Does exactly one thing well. |
+| **numpy** | >=1.24.0 | Vectorized math | Sub-microsecond cosine similarity via `np.dot()` on L2-normalized embeddings. Also stores embeddings as `float32` arrays in memory. |
 | **groq** | 0.15.0 | LLM API client | Official Groq SDK with typed responses, retry logic, and proper error classes. Safer than raw `requests`. |
 | **python-dotenv** | 1.0.1 | `.env` file loading | Standard, lightweight, universally understood. |
 | **pydantic** | 2.10.4 | Input validation | Already a FastAPI dependency — used for request/response models with constrained types. |
@@ -149,11 +150,18 @@ Output: 8.7 (high — these are paraphrases)
 
 The cross-encoder is ~10x slower than a bi-encoder comparison, but it only runs **once** — on the single best candidate from Layer 2. This is the layer that catches the "reset password" vs "delete account" trap.
 
-### Why `ms-marco-MiniLM-L-6-v2`:
+### Why `quora-distilroberta-base`:
 
-- Trained on MS MARCO (a massive question-answer relevance dataset) — ideal for question similarity.
-- 22M parameters — same speed class as the bi-encoder.
-- Well-calibrated scores — the gap between "same meaning" (5-10) and "different meaning" (0-2) is wide and reliable.
+- **Trained on Quora Question Pairs** — a dataset of 400K question pairs labeled as duplicate or not. This is exactly our use case: "Are these two questions asking the same thing?"
+- Outputs a **probability [0, 1]** where > 0.5 means "duplicate question".
+- Correctly distinguishes **same intent** from **same topic** — e.g., "roadmap for AI engineer" vs "what is AI engineer" share the topic (AI) but have different intents (roadmap ≠ definition).
+
+### What was considered and rejected:
+
+| Model | Why Not |
+|---|---|
+| `ms-marco-MiniLM-L-6-v2` | Trained for passage retrieval (query → document). Returns nonsensical negative scores (-5.88) when given two short questions. Wrong task entirely. |
+| `stsb-distilroberta-base` | Trained on Semantic Textual Similarity. Measures **topic overlap**, not **intent equivalence**. Scored "roadmap for AI" vs "what is AI" at 0.514 — barely above threshold — because they share the topic. |
 
 ---
 
@@ -173,19 +181,22 @@ The three-layer pipeline gives us:
 Layer 1 (BM25):          O(n) but fast — narrows 100 entries to ~3-5 candidates
 Layer 2 (Cosine):        O(k) comparisons, k << n — picks the best candidate
 Layer 3 (Cross-encoder): O(1) — one call on the single best candidate
+Layer 0 (Exact match):   O(n) string comparison — instant return, zero ML
 ```
 
 **Total: O(n) cheap + O(1) expensive = fast AND accurate.**
+
+Layer 0 (exact match) was added as a zero-cost optimization — if the user sends the exact same query text, no ML models are invoked at all. This brings repeat-query latency from ~300ms to < 1ms.
 
 ---
 
 ## 7. How Default Thresholds Were Chosen
 
-### `CACHE_SIMILARITY_THRESHOLD = 0.85`
+### `CACHE_SIMILARITY_THRESHOLD = 0.76`
 
-- Cosine similarity of `all-MiniLM-L6-v2` embeddings on paraphrase pairs typically falls in the **0.85–0.95** range.
+- Cosine similarity of L2-normalized `all-MiniLM-L6-v2` embeddings on paraphrase pairs typically falls in the **0.80–0.95** range.
 - Non-paraphrase but topic-related pairs fall in the **0.60–0.80** range.
-- 0.85 is the conventional sweet spot: high enough to avoid most false positives, low enough to catch most paraphrases.
+- 0.76 lets more candidates through to Layer 3 (the cross-encoder), where intent is verified accurately.
 - The dashboard settings panel lets you tune this live.
 
 ### `CACHE_BM25_MIN_OVERLAP = 0.3`
@@ -196,10 +207,16 @@ Layer 3 (Cross-encoder): O(1) — one call on the single best candidate
 
 ### `CACHE_CROSSENCODER_MIN_SCORE = 0.5`
 
-- The `ms-marco-MiniLM-L-6-v2` cross-encoder outputs raw logits, not probabilities.
-- For true paraphrases, scores typically range from **5.0 to 10.0**.
-- For related-but-different queries, scores are **-2.0 to 2.0**.
-- 0.5 is a conservative cutoff — well below paraphrase scores, well above trap-pair scores.
+- The `quora-distilroberta-base` cross-encoder outputs probabilities in [0, 1].
+- > 0.5 means "these are duplicate questions" — the natural decision boundary.
+- True paraphrases score **0.7 – 0.95**.
+- Related-but-different queries score **0.1 – 0.4**.
+
+### Cross-Encoder Skip Threshold = 0.92
+
+- When cosine similarity > 0.92, the match is near-identical — the cross-encoder is skipped to save ~200ms.
+- Below 0.92, the cross-encoder confirms intent equivalence.
+- This prevents false positives like "roadmap for AI" vs "what is AI" (cosine 0.90) from being accepted without cross-encoder verification.
 
 ---
 

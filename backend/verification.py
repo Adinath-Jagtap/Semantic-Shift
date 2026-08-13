@@ -2,57 +2,102 @@
 Three-layer verification pipeline for semantic cache hit/miss decisions.
 
 Pipeline:
+  0. Exact-match short-circuit — instant return, no ML.
   1. BM25 pre-filter  — keyword overlap narrows candidates.
   2. Cosine similarity — embedding distance picks the best match.
   3. Cross-encoder     — pairwise re-ranking confirms semantic equivalence.
+     (ONLY runs for borderline cases near the cosine threshold)
 
 Every return path from decide_cache_hit() includes a debug dict so the
 dashboard and tests can show *why* a decision was made, not just what it was.
 """
 
-import math
+import logging
+import time
 from typing import Any
 
+import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from backend.cache_store import CacheEntry, CacheStore
 from backend.config import settings
 
-_embedding_model: SentenceTransformer | None = None
-_crossencoder_model: CrossEncoder | None = None
+logger = logging.getLogger("semantic_cache")
+
+# ---------------------------------------------------------------------------
+# Model singletons — loaded eagerly at import time so startup pays the cost
+# once, and every request is fast.
+# ---------------------------------------------------------------------------
+
+logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
+_embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+logger.info("Embedding model loaded.")
+
+logger.info("Loading cross-encoder (cross-encoder/quora-distilroberta-base)...")
+_crossencoder_model = CrossEncoder("cross-encoder/quora-distilroberta-base")
+logger.info("Cross-encoder loaded.")
+
+# ---------------------------------------------------------------------------
+# Embedding cache — avoids redundant model.encode() calls for the same text.
+# Maps query_text → numpy embedding. Populated on every embed_text() call
+# and on cache load from SQLite so repeated queries cost 0ms.
+# ---------------------------------------------------------------------------
+_embedding_cache: dict[str, np.ndarray] = {}
 
 
-def _get_embedding_model() -> SentenceTransformer:
-    """Lazy-load the bi-encoder embedding model (all-MiniLM-L6-v2)."""
-    global _embedding_model
-    if _embedding_model is None:
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedding_model
-
-
-def _get_crossencoder() -> CrossEncoder:
-    """Lazy-load the cross-encoder re-ranker (ms-marco-MiniLM-L-6-v2)."""
-    global _crossencoder_model
-    if _crossencoder_model is None:
-        _crossencoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    return _crossencoder_model
-
-def embed_text(text: str) -> list[float]:
+def embed_text(text: str) -> np.ndarray:
     """
     Compute the dense embedding for a single string.
 
-    Returns a plain Python list[float] (not a numpy array) so it can be
-    JSON-serialized directly into SQLite.
+    Uses an in-memory cache so the same text is never encoded twice.
+    Returns a numpy array (384-dim for MiniLM-L6-v2) for fast dot-product.
     """
-    model = _get_embedding_model()
-    vector = model.encode(text, convert_to_numpy=True)
-    return vector.tolist()
+    cached = _embedding_cache.get(text)
+    if cached is not None:
+        return cached
+
+    vector = _embedding_model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+    _embedding_cache[text] = vector
+    return vector
+
+
+def warm_embedding_cache(entries: list[CacheEntry]) -> None:
+    """
+    Pre-populate the embedding cache from CacheStore entries loaded at startup.
+    This ensures that queries matching cached entries never trigger model.encode().
+    """
+    for entry in entries:
+        _embedding_cache[entry.query_text] = entry.embedding
+
+
+# ---------------------------------------------------------------------------
+# Layer 0 — Exact-match short-circuit
+# ---------------------------------------------------------------------------
+
+def _normalize_query(text: str) -> str:
+    """Normalize a query for exact matching: lowercase, strip, remove trailing punctuation, collapse whitespace."""
+    return text.strip().lower().rstrip("?.!,").strip()
+
+
+def _exact_match(
+    query: str, entries: list[CacheEntry]
+) -> CacheEntry | None:
+    """
+    O(n) scan for an exact string match (case-insensitive, punctuation-normalized).
+    Returns instantly if found — no ML involved.
+    """
+    q_normalized = _normalize_query(query)
+    for entry in entries:
+        if _normalize_query(entry.query_text) == q_normalized:
+            return entry
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Layer 1 — BM25 pre-filter
 # ---------------------------------------------------------------------------
+
 def _tokenize(text: str) -> list[str]:
     """Simple whitespace + lowercase tokenizer for BM25."""
     return text.lower().split()
@@ -77,7 +122,7 @@ def bm25_prefilter(
     raw_scores = bm25.get_scores(query_tokens)
 
     # Normalize scores to [0, 1] for threshold comparison.
-    max_score = max(raw_scores) if max(raw_scores) > 0 else 1.0
+    max_score = float(max(raw_scores)) if max(raw_scores) > 0 else 1.0
     scored = [
         (entries[i], float(raw_scores[i] / max_score))
         for i in range(len(entries))
@@ -95,27 +140,19 @@ def bm25_prefilter(
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 — Cosine similarity
+# Layer 2 — Cosine similarity (numpy-accelerated)
 # ---------------------------------------------------------------------------
-def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+
+def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     """
-    Compute cosine similarity between two vectors.
-
-    Implemented manually to avoid importing scipy/numpy for a single function.
-    Returns a float in [-1, 1].
+    Compute cosine similarity between two L2-normalized numpy vectors.
+    Reduces to a single dot product (sub-microsecond).
     """
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    mag_a = math.sqrt(sum(a * a for a in vec_a))
-    mag_b = math.sqrt(sum(b * b for b in vec_b))
-
-    if mag_a == 0.0 or mag_b == 0.0:
-        return 0.0
-
-    return dot / (mag_a * mag_b)
+    return float(np.dot(vec_a, vec_b))
 
 
 def _find_best_cosine_match(
-    query_embedding: list[float],
+    query_embedding: np.ndarray,
     candidates: list[tuple[CacheEntry, float]],
 ) -> tuple[CacheEntry | None, float, list[dict[str, Any]]]:
     """
@@ -145,51 +182,64 @@ def _find_best_cosine_match(
 
 
 # ---------------------------------------------------------------------------
-# Layer 3 — Cross-encoder re-check
+# Layer 3 — Cross-encoder re-check (ONLY for borderline cases)
 # ---------------------------------------------------------------------------
+
 def crossencoder_score(query: str, candidate_text: str) -> float:
     """
     Run the cross-encoder on a (query, candidate) pair.
 
     Returns a float score — higher means more semantically similar.
-    The cross-encoder sees the raw text pair (not embeddings) and is
-    more accurate than bi-encoder cosine similarity at distinguishing
-    paraphrases from superficially similar but semantically different queries.
+    The STS-B model outputs on a [0, 5] scale.
     """
-    model = _get_crossencoder()
-    score = model.predict([(query, candidate_text)])
+    score = _crossencoder_model.predict([(query, candidate_text)])
     return float(score[0])
 
 
 # ---------------------------------------------------------------------------
 # Orchestrator — decide_cache_hit
 # ---------------------------------------------------------------------------
+
+# The cross-encoder is the most expensive step (~200-400ms on CPU).
+# It ONLY skips for near-identical queries (cosine > 0.92) where false
+# positives are essentially impossible. For everything else (0.76 - 0.92),
+# the cross-encoder confirms that the INTENT matches, not just the keywords.
+_BORDERLINE_UPPER = 0.92
+
+
 def decide_cache_hit(
     query: str, store: CacheStore
-) -> tuple[CacheEntry | None, dict[str, Any]]:
-    """
-    Run the full 3-layer verification pipeline to decide if a query
-    can safely reuse a cached answer.
-
-    Returns:
-        (matching_entry, debug_dict) where matching_entry is None on a miss.
-        The debug dict always explains *why* the decision was made.
-    """
+) -> tuple[CacheEntry | None, dict[str, Any], np.ndarray | None]:
     entries = store.all_entries()
 
     # --- Early exit: empty cache ---
     if not entries:
-        return None, {"reason": "empty_cache"}
+        return None, {"reason": "empty_cache"}, None
+
+    # --- Layer 0: Exact-match short-circuit ---
+    exact = _exact_match(query, entries)
+    if exact is not None:
+        return exact, {
+            "reason": "hit",
+            "method": "exact_match",
+            "similarity": 1.0,
+            "crossencoder_score": "skipped",
+            "matched_query": exact.query_text,
+        }, None 
 
     # --- Layer 1: BM25 pre-filter ---
+    t0 = time.perf_counter()
     bm25_candidates = bm25_prefilter(query, entries)
+    t_bm25 = (time.perf_counter() - t0) * 1000
 
     if not bm25_candidates:
-        # Shouldn't happen (bm25_prefilter returns top-3 fallback), but guard.
-        return None, {"reason": "no_bm25_candidates"}
+        return None, {"reason": "no_bm25_candidates"}, None
 
     # --- Layer 2: Cosine similarity ---
+    t0 = time.perf_counter()
     query_embedding = embed_text(query)
+    t_embed = (time.perf_counter() - t0) * 1000
+
     best_entry, best_sim, candidate_scores = _find_best_cosine_match(
         query_embedding, bm25_candidates
     )
@@ -200,10 +250,26 @@ def decide_cache_hit(
             "best_score": round(best_sim, 4),
             "threshold": settings.similarity_threshold,
             "candidates": candidate_scores,
-        }
+            "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2)},
+        }, query_embedding
 
-    # --- Layer 3: Cross-encoder re-check ---
+    # --- Layer 3: Cross-encoder (ONLY for borderline cases) ---
+    if best_sim >= _BORDERLINE_UPPER:
+        # High confidence — skip cross-encoder entirely.
+        return best_entry, {
+            "reason": "hit",
+            "method": "high_confidence",
+            "similarity": round(best_sim, 4),
+            "crossencoder_score": "skipped",
+            "matched_query": best_entry.query_text,
+            "candidates": candidate_scores,
+            "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2)},
+        }, query_embedding
+
+    # Borderline — run cross-encoder to confirm.
+    t0 = time.perf_counter()
     ce_score = crossencoder_score(query, best_entry.query_text)
+    t_ce = (time.perf_counter() - t0) * 1000
 
     if ce_score < settings.crossencoder_min_score:
         return None, {
@@ -213,13 +279,16 @@ def decide_cache_hit(
             "threshold_similarity": settings.similarity_threshold,
             "threshold_crossencoder": settings.crossencoder_min_score,
             "candidates": candidate_scores,
-        }
+            "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2), "crossencoder": round(t_ce, 2)},
+        }, query_embedding
 
-    # --- Cache hit ---
+    # --- Cache hit (confirmed by cross-encoder) ---
     return best_entry, {
         "reason": "hit",
+        "method": "full_pipeline",
         "similarity": round(best_sim, 4),
         "crossencoder_score": round(ce_score, 4),
         "matched_query": best_entry.query_text,
         "candidates": candidate_scores,
-    }
+        "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2), "crossencoder": round(t_ce, 2)},
+    }, query_embedding

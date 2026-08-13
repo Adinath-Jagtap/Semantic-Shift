@@ -19,7 +19,7 @@ from backend.config import settings
 
 def test_empty_cache_returns_miss(cache_store):
     """An empty cache must always return a miss with reason 'empty_cache'."""
-    result, debug = decide_cache_hit("How do I reset my password?", cache_store)
+    result, debug, _ = decide_cache_hit("How do I reset my password?", cache_store)
 
     assert result is None
     assert debug["reason"] == "empty_cache"
@@ -45,7 +45,7 @@ def test_paraphrase_returns_hit(cache_store):
     embedding = embed_text(original)
     cache_store.add(original, embedding, "Go to Settings > Security > Reset Password.")
 
-    result, debug = decide_cache_hit(paraphrase, cache_store)
+    result, debug, _ = decide_cache_hit(paraphrase, cache_store)
 
     assert result is not None, (
         f"Expected a cache hit for paraphrase, got miss. Debug: {debug}"
@@ -79,7 +79,7 @@ def test_trap_pair_returns_miss(cache_store):
         cached_query, embedding, "Go to Settings > Security > Reset Password."
     )
 
-    result, debug = decide_cache_hit(trap_query, cache_store)
+    result, debug, _ = decide_cache_hit(trap_query, cache_store)
 
     assert result is None, (
         f"CRITICAL: Trap pair produced a false cache hit! Debug: {debug}"
@@ -116,7 +116,7 @@ def test_threshold_sensitivity(cache_store):
     try:
         # At a very high threshold, this should be a miss or borderline.
         settings.similarity_threshold = 0.99
-        result_strict, debug_strict = decide_cache_hit(borderline_query, cache_store)
+        result_strict, debug_strict, _ = decide_cache_hit(borderline_query, cache_store)
 
         # At a very low threshold, this should definitely be a hit.
         settings.similarity_threshold = 0.30
@@ -124,7 +124,7 @@ def test_threshold_sensitivity(cache_store):
         original_ce = settings.crossencoder_min_score
         settings.crossencoder_min_score = -10.0
 
-        result_loose, debug_loose = decide_cache_hit(borderline_query, cache_store)
+        result_loose, debug_loose, _ = decide_cache_hit(borderline_query, cache_store)
 
         # Restore cross-encoder threshold.
         settings.crossencoder_min_score = original_ce

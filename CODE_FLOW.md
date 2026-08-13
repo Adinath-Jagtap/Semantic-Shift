@@ -55,7 +55,7 @@ This document maps every module, every function, its inputs/outputs, where it's 
 | `groq_api_key` | `str` | The Groq API key (never logged, never returned in responses) |
 | `groq_model` | `str` | LLM model name, default `llama-3.1-8b-instant` |
 | `cache_persist_path` | `str` | SQLite file path, default `./cache_store.db` |
-| `similarity_threshold` | `float` (property) | Thread-safe getter/setter, default `0.85` |
+| `similarity_threshold` | `float` (property) | Thread-safe getter/setter, default `0.76` |
 | `bm25_min_overlap` | `float` (property) | Thread-safe getter/setter, default `0.3` |
 | `crossencoder_min_score` | `float` (property) | Thread-safe getter/setter, default `0.5` |
 | `estimated_cost_per_call` | `float` | Fixed at `$0.03` for "dollars saved" metric |
@@ -90,7 +90,7 @@ config.py (import) → load_dotenv() → _Settings.__init__()
 |---|---|---|
 | `id` | `int` | SQLite autoincrement primary key |
 | `query_text` | `str` | The original user query |
-| `embedding` | `list[float]` | 384-dimensional dense vector from `all-MiniLM-L6-v2` |
+| `embedding` | `np.ndarray` (float32) | 384-dimensional L2-normalized dense vector from `all-MiniLM-L6-v2` |
 | `answer` | `str` | The LLM's response text |
 | `created_at` | `float` | Unix timestamp (`time.time()`) |
 
@@ -126,7 +126,7 @@ On cache check:
 CREATE TABLE IF NOT EXISTS cache_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     query_text TEXT NOT NULL,
-    embedding TEXT NOT NULL,   -- JSON-encoded list[float]
+    embedding TEXT NOT NULL,   -- JSON-encoded list[float], loaded as np.ndarray in memory
     answer TEXT NOT NULL,
     created_at REAL NOT NULL
 );
@@ -143,13 +143,13 @@ CREATE TABLE IF NOT EXISTS cache_entries (
 | Function | Returns | Model | Loaded When |
 |---|---|---|---|
 | `_get_embedding_model()` | `SentenceTransformer` | `all-MiniLM-L6-v2` | First call to `embed_text()` |
-| `_get_crossencoder()` | `CrossEncoder` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | First call to `crossencoder_score()` |
+| `_crossencoder_model` | `CrossEncoder` | `cross-encoder/quora-distilroberta-base` | Loaded eagerly at import time |
 
 ### Functions
 
 | Function | Signature | Layer | Description | Called By |
 |---|---|---|---|---|
-| `embed_text` | `(text: str) → list[float]` | — | Computes 384-dim embedding, returns plain Python list | `main.py` (on miss, to store), `decide_cache_hit` (for query) |
+| `embed_text` | `(text: str) → np.ndarray` | In-memory cache | Computes 384-dim L2-normalized embedding, cached per query text | `main.py` (on miss, to store), `decide_cache_hit` (for query) |
 | `_tokenize` | `(text: str) → list[str]` | — | Lowercase whitespace tokenizer | `bm25_prefilter` |
 | `bm25_prefilter` | `(query, entries) → list[tuple[CacheEntry, float]]` | 1 | BM25Okapi scoring, threshold filter, top-3 fallback | `decide_cache_hit` |
 | `cosine_similarity` | `(vec_a, vec_b) → float` | — | Manual dot-product cosine, returns [-1, 1] | `_find_best_cosine_match` |

@@ -8,6 +8,8 @@ Design rationale:
   SQLite is never queried per-request.
 - add() writes to SQLite AND appends to the in-memory list atomically,
   so a newly cached answer is usable on the very next request.
+- Embeddings are stored as numpy arrays in memory for fast dot-product
+  computation, but serialized as JSON in SQLite for portability.
 """
 
 import json
@@ -15,12 +17,14 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
+import numpy as np
+
 
 @dataclass
 class CacheEntry:
     id: int
     query_text: str
-    embedding: list[float]
+    embedding: np.ndarray
     answer: str
     created_at: float
 
@@ -75,16 +79,21 @@ class CacheStore:
                 CacheEntry(
                     id=row[0],
                     query_text=row[1],
-                    embedding=json.loads(row[2]),
+                    embedding=np.array(json.loads(row[2]), dtype=np.float32),
                     answer=row[3],
                     created_at=row[4],
                 )
             )
         return entries
 
-    def add(self, query_text: str, embedding: list[float], answer: str) -> CacheEntry:
+    def add(
+        self,
+        query_text: str,
+        embedding: np.ndarray,
+        answer: str,
+    ) -> CacheEntry:
         created_at = time.time()
-        embedding_json = json.dumps(embedding)
+        embedding_json = json.dumps(embedding.tolist())
 
         cursor = self._conn.execute(
             _INSERT_SQL, (query_text, embedding_json, answer, created_at)

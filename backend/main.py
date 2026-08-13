@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from backend.cache_store import CacheStore
 from backend.config import settings
 from backend.llm_client import GroqAPIError, call_groq
-from backend.verification import decide_cache_hit, embed_text
+from backend.verification import decide_cache_hit, embed_text, warm_embedding_cache
 
 logger = logging.getLogger("semantic_cache")
 logging.basicConfig(
@@ -131,6 +131,11 @@ async def lifespan(app: FastAPI):
         len(store.entries),
         settings.cache_persist_path,
     )
+
+    # Pre-populate the embedding cache so cached queries never trigger encode().
+    warm_embedding_cache(store.entries)
+    logger.info("Embedding cache warmed with %d entries.", len(store.entries))
+
     logger.info("Semantic-Shift is ready.")
 
     yield  # Application runs here.
@@ -177,7 +182,7 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
 
     start = time.perf_counter()
 
-    hit_entry, debug = decide_cache_hit(last_user_msg, store)
+    hit_entry, debug, query_embedding = decide_cache_hit(last_user_msg, store)
     if hit_entry is not None:
         latency_ms = (time.perf_counter() - start) * 1000
         stats.total_requests += 1
@@ -189,6 +194,7 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
                 "cached": True,
                 "latency_ms": round(latency_ms, 2),
                 "reason": debug.get("reason"),
+                "method": debug.get("method"),
                 "similarity": debug.get("similarity"),
                 "crossencoder_score": debug.get("crossencoder_score"),
             }
@@ -226,7 +232,10 @@ async def chat_completions(request: ChatRequest) -> ChatResponse:
             },
         )
 
-    query_embedding = embed_text(last_user_msg)
+    # Reuse the embedding from decide_cache_hit if available,
+    # otherwise compute it now (only happens when cache was empty).
+    if query_embedding is None:
+        query_embedding = embed_text(last_user_msg)
     store.add(last_user_msg, query_embedding, answer)
 
     latency_ms = (time.perf_counter() - start) * 1000

@@ -35,7 +35,7 @@ class _Settings:
 
         # --- Mutable thresholds (guarded by lock) ---
         self._similarity_threshold: float = float(
-            os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.85")
+            os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.76")
         )
         self._bm25_min_overlap: float = float(
             os.getenv("CACHE_BM25_MIN_OVERLAP", "0.3")
