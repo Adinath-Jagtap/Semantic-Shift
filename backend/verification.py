@@ -24,35 +24,13 @@ from backend.cache_store import CacheEntry, CacheStore
 from backend.config import settings
 
 logger = logging.getLogger("semantic_cache")
+logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
+_embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+logger.info("Embedding model loaded.")
 
-# ---------------------------------------------------------------------------
-# Model singletons — loaded eagerly at import time so startup pays the cost
-# once, and every request is fast.
-# ---------------------------------------------------------------------------
-
-_embedding_model = None
-_crossencoder_model = None
-
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        logger.info("Embedding model loaded.")
-    return _embedding_model
-
-def _get_crossencoder():
-    global _crossencoder_model
-    if _crossencoder_model is None:
-        logger.info("Loading cross-encoder (cross-encoder/quora-distilroberta-base)...")
-        _crossencoder_model = CrossEncoder("cross-encoder/quora-distilroberta-base")
-        logger.info("Cross-encoder loaded.")
-    return _crossencoder_model
-
-def preload_models() -> None:
-    """Triggered in a background thread post-startup so first user query doesn't hang."""
-    _get_embedding_model()
-    _get_crossencoder()
+logger.info("Loading cross-encoder (cross-encoder/quora-distilroberta-base)...")
+_crossencoder_model = CrossEncoder("cross-encoder/quora-distilroberta-base")
+logger.info("Cross-encoder loaded.")
 
 # ---------------------------------------------------------------------------
 # Embedding cache — avoids redundant model.encode() calls for the same text.
@@ -61,29 +39,17 @@ def preload_models() -> None:
 # ---------------------------------------------------------------------------
 _embedding_cache: dict[str, np.ndarray] = {}
 
-
 def embed_text(text: str) -> np.ndarray:
-    """
-    Compute the dense embedding for a single string.
-
-    Uses an in-memory cache so the same text is never encoded twice.
-    Returns a numpy array (384-dim for MiniLM-L6-v2) for fast dot-product.
-    """
     cached = _embedding_cache.get(text)
     if cached is not None:
         return cached
 
-    model = _get_embedding_model()
-    vector = model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+    vector = _embedding_model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
     _embedding_cache[text] = vector
     return vector
 
 
 def warm_embedding_cache(entries: list[CacheEntry]) -> None:
-    """
-    Pre-populate the embedding cache from CacheStore entries loaded at startup.
-    This ensures that queries matching cached entries never trigger model.encode().
-    """
     for entry in entries:
         _embedding_cache[entry.query_text] = entry.embedding
 
@@ -93,17 +59,12 @@ def warm_embedding_cache(entries: list[CacheEntry]) -> None:
 # ---------------------------------------------------------------------------
 
 def _normalize_query(text: str) -> str:
-    """Normalize a query for exact matching: lowercase, strip, remove trailing punctuation, collapse whitespace."""
     return text.strip().lower().rstrip("?.!,").strip()
 
 
 def _exact_match(
     query: str, entries: list[CacheEntry]
 ) -> CacheEntry | None:
-    """
-    O(n) scan for an exact string match (case-insensitive, punctuation-normalized).
-    Returns instantly if found — no ML involved.
-    """
     q_normalized = _normalize_query(query)
     for entry in entries:
         if _normalize_query(entry.query_text) == q_normalized:
@@ -123,13 +84,6 @@ def _tokenize(text: str) -> list[str]:
 def bm25_prefilter(
     query: str, entries: list[CacheEntry]
 ) -> list[tuple[CacheEntry, float]]:
-    """
-    Score the query against all cached query texts using BM25Okapi.
-
-    Returns entries that pass the BM25_MIN_OVERLAP threshold. If no entry
-    passes, the top-3 candidates are returned anyway — BM25 is noisy for
-    short queries and should not hard-reject on its own (spec §5.3).
-    """
     if not entries:
         return []
 
@@ -209,8 +163,7 @@ def crossencoder_score(query: str, candidate_text: str) -> float:
     Returns a float score — higher means more semantically similar.
     The STS-B model outputs on a [0, 5] scale.
     """
-    model = _get_crossencoder()
-    score = model.predict([(query, candidate_text)])
+    score = _crossencoder_model.predict([(query, candidate_text)])
     return float(score[0])
 
 
@@ -230,7 +183,6 @@ def decide_cache_hit(
 ) -> tuple[CacheEntry | None, dict[str, Any], np.ndarray | None]:
     entries = store.all_entries()
 
-    # --- Early exit: empty cache ---
     if not entries:
         return None, {"reason": "empty_cache"}, None
 
@@ -273,7 +225,6 @@ def decide_cache_hit(
 
     # --- Layer 3: Cross-encoder (ONLY for borderline cases) ---
     if best_sim >= _BORDERLINE_UPPER:
-        # High confidence — skip cross-encoder entirely.
         return best_entry, {
             "reason": "hit",
             "method": "high_confidence",
@@ -284,7 +235,6 @@ def decide_cache_hit(
             "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2)},
         }, query_embedding
 
-    # Borderline — run cross-encoder to confirm.
     t0 = time.perf_counter()
     ce_score = crossencoder_score(query, best_entry.query_text)
     t_ce = (time.perf_counter() - t0) * 1000
@@ -300,7 +250,6 @@ def decide_cache_hit(
             "timing_ms": {"bm25": round(t_bm25, 2), "embed": round(t_embed, 2), "crossencoder": round(t_ce, 2)},
         }, query_embedding
 
-    # --- Cache hit (confirmed by cross-encoder) ---
     return best_entry, {
         "reason": "hit",
         "method": "full_pipeline",

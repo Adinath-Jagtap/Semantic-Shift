@@ -12,14 +12,7 @@ FastAPI application — the Semantic-Shift cache proxy API server.
 #    multiple server instances.
 """
 
-import os
-# Aggressively limit thread allocation to prevent OOM on 512MB instances
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-
 import logging
-import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,14 +23,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-import torch
-# Limit PyTorch memory overhead on 512MB instances
-torch.set_num_threads(1)
-
 from backend.cache_store import CacheStore
 from backend.config import settings
 from backend.llm_client import GroqAPIError, call_groq
-from backend.verification import decide_cache_hit, embed_text, preload_models, warm_embedding_cache
+from backend.verification import decide_cache_hit, embed_text, warm_embedding_cache
 
 logger = logging.getLogger("semantic_cache")
 logging.basicConfig(
@@ -148,10 +137,6 @@ async def lifespan(app: FastAPI):
     logger.info("Embedding cache warmed with %d entries.", len(store.entries))
 
     logger.info("Semantic-Shift is ready.")
-    
-    # Trigger model download/loading in a background thread so the port binds instantly 
-    # but the first user query doesn't hang.
-    threading.Thread(target=preload_models, daemon=True).start()
 
     yield  # Application runs here.
 
