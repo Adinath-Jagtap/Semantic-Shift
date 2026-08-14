@@ -258,7 +258,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | **numpy**                                              | Vectorized dot product for sub-microsecond cosine sim |
 | **Groq SDK**                                           | Ultra-low-latency LLM inference (LPU hardware)        |
 | **SQLite**                                             | Zero-dependency persistent cache with ACID guarantees |
-| **Streamlit**                                          | Dashboard UI with live threshold sliders              |
+| **HTML &CSS**                                          | Dashboard UI with live threshold sliders              |
 | **python-dotenv**                                      | Environment variable loading                          |
 | **pydantic**                                           | Request/response validation                           |
 | **pytest**                                             | Test framework                                        |
