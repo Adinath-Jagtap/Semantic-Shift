@@ -41,7 +41,10 @@ class _Settings:
             os.getenv("CACHE_BM25_MIN_OVERLAP", "0.3")
         )
         self._crossencoder_min_score: float = float(
-            os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.25")
+            os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.75")
+        )
+        self._char_similarity_threshold: float = float(
+            os.getenv("CACHE_CHAR_SIMILARITY_THRESHOLD", "0.95")
         )
 
         # NOTE: This is an estimate, not a measured value.
@@ -78,5 +81,15 @@ class _Settings:
     def crossencoder_min_score(self, value: float) -> None:
         with self._lock:
             self._crossencoder_min_score = value
+
+    @property
+    def char_similarity_threshold(self) -> float:
+        with self._lock:
+            return self._char_similarity_threshold
+
+    @char_similarity_threshold.setter
+    def char_similarity_threshold(self, value: float) -> None:
+        with self._lock:
+            self._char_similarity_threshold = value
 
 settings = _Settings()

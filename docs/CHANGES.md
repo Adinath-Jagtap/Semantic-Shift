@@ -42,7 +42,7 @@ produced a score of **-5.88** — an out-of-distribution score that caused every
 
 | Pair | Old Model (ms-marco) | New Model (quora-distilroberta-base) |
 |---|---|---|
-| "reset password" vs "recover password" | **-5.88** (rejected) | **0.718** (accepted) |
+| "reset password" vs "recover password" | **-5.88** (rejected) | **0.994** (accepted) |
 | "reset password" vs "delete account" | Low (rejected) | Low (rejected) |
 
 Paraphrases are correctly detected while adversarial traps are filtered out.
@@ -361,7 +361,7 @@ To eliminate repeated indexing overhead:
 | Scenario | Before Optimizations | Calibrated Benchmark (Run 2) | Speedup vs LLM (~10s) |
 |---|---|---|---|
 | **Exact Repeat** | ~350ms | **0.05 ms** (p95 0.76 ms) | **> 100,000x** |
-| **Typo Match** (`pythn` → `python`) | ~10,000ms (miss) | **~15 ms** | **~650x** |
+| **Typo Match** (`pythn` → `python`) | ~10,000ms (miss) | _not covered by the benchmark_ | — |
 | **Paraphrase Hit** (cosine >= 0.88) | ~442ms | **~13 ms** (p95 22 ms) | **~770x** |
 | **Paraphrase Hit** (borderline 0.72–0.88) | ~442ms | **~43 ms** (p95 50 ms) | **~230x** |
 | **Median Paraphrase Hit** (overall) | ~442ms | **27.82 ms** (p95 92.19 ms) | **~370x** |

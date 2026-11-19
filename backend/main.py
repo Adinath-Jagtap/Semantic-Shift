@@ -96,13 +96,17 @@ class StatsResponse(BaseModel):
 class ConfigUpdate(BaseModel):
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     bm25_min_overlap: float | None = Field(None, ge=0.0, le=1.0)
-    crossencoder_min_score: float | None = Field(None, ge=-10.0, le=10.0)
+    crossencoder_min_score: float | None = Field(None, ge=0.0, le=1.0)
 
 
 class ConfigResponse(BaseModel):
     similarity_threshold: float
     bm25_min_overlap: float
     crossencoder_min_score: float
+    char_similarity_threshold: float
+    llm_model: str
+    crossencoder_model: str
+    embedding_model: str
 
 
 class HealthResponse(BaseModel):
@@ -124,6 +128,7 @@ async def lifespan(app: FastAPI):
     logger.info("SIMILARITY_THRESHOLD=%.2f", settings.similarity_threshold)
     logger.info("BM25_MIN_OVERLAP=%.2f", settings.bm25_min_overlap)
     logger.info("CROSSENCODER_MIN_SCORE=%.2f", settings.crossencoder_min_score)
+    logger.info("CHAR_SIMILARITY_THRESHOLD=%.2f", settings.char_similarity_threshold)
 
     store = CacheStore(settings.cache_persist_path)
     logger.info(
@@ -145,7 +150,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Semantic-Shift",
-    description="Semantic cache proxy with 3-layer verification for LLM APIs.",
+    description="Semantic cache proxy with 4-layer verification for LLM APIs.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -159,10 +164,12 @@ app.add_middleware(
 )
 
 _DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def serve_dashboard() -> HTMLResponse:
-    """Serve the dashboard SPA from the root URL."""
-    return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
+@app.get("/", include_in_schema=False)
+async def serve_dashboard() -> Any:
+    """Serve the dashboard SPA if present, otherwise return backend status JSON."""
+    if _DASHBOARD_HTML.is_file():
+        return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
+    return {"status": "Semantic-Shift backend running"}
 
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat_completions(request: ChatRequest) -> ChatResponse:
@@ -282,6 +289,25 @@ async def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+def _config_response() -> ConfigResponse:
+    """Build a ConfigResponse from the current settings (read-only fields included)."""
+    return ConfigResponse(
+        similarity_threshold=settings.similarity_threshold,
+        bm25_min_overlap=settings.bm25_min_overlap,
+        crossencoder_min_score=settings.crossencoder_min_score,
+        char_similarity_threshold=settings.char_similarity_threshold,
+        llm_model=settings.groq_model,
+        crossencoder_model="cross-encoder/quora-distilroberta-base",
+        embedding_model="all-MiniLM-L6-v2",
+    )
+
+
+@app.get("/config", response_model=ConfigResponse)
+async def get_config() -> ConfigResponse:
+    """Return the current verification thresholds and model names (read-only)."""
+    return _config_response()
+
+
 @app.post("/config", response_model=ConfigResponse)
 async def update_config(update: ConfigUpdate) -> ConfigResponse:
     if update.similarity_threshold is not None:
@@ -298,8 +324,4 @@ async def update_config(update: ConfigUpdate) -> ConfigResponse:
             "crossencoder_min_score updated to %.4f", update.crossencoder_min_score
         )
 
-    return ConfigResponse(
-        similarity_threshold=settings.similarity_threshold,
-        bm25_min_overlap=settings.bm25_min_overlap,
-        crossencoder_min_score=settings.crossencoder_min_score,
-    )
+    return _config_response()

@@ -66,12 +66,12 @@ User Query
 
 | Layer                           | Algorithm                                                      | Speed                         | Purpose                                                                                                                                                                                |
 | ------------------------------- | -------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Layer 0** — Exact/Typo Match  | Normalized string compare & SequenceMatcher (typo cutoff 0.95) | < 1ms exact, ~15ms typo path  | Instant return for identical queries. Minor typos (`pythn` → `python`) are matched after the embedding step, only when the cosine match falls below its threshold.                     |
-| **Layer 1** — Cosine Similarity | `all-MiniLM-L6-v2` embeddings (384-dim, L2-norm)               | ~13ms (embed + cosine)        | Vectorized `np.dot` finds the semantically closest match instantly among all cached entries.                                                                                           |
+| **Layer 0** — Exact/Typo Match  | Normalized string compare & SequenceMatcher (typo cutoff 0.95) | < 1ms exact; typo fallback not covered by the benchmark | Instant return for identical queries. Minor typos (`pythn` → `python`) are matched after the embedding step, only when the cosine match falls below its threshold.                     |
+| **Layer 1** — Cosine Similarity | `all-MiniLM-L6-v2` embeddings (384-dim, L2-norm)               | ~12ms (embed + cosine)        | Vectorized `np.dot` finds the semantically closest match instantly among all cached entries.                                                                                           |
 | **Layer 2** — BM25              | Keyword overlap (TF-IDF)                                       | ~1-5ms                        | Sanity check for borderline cosine scores. Adds keyword-overlap evidence to the debug trace; the accept/reject decision is made by the cross-encoder.                                  |
-| **Layer 3** — Cross-Encoder     | `quora-distilroberta-base` pairwise scoring                    | ~30ms (43ms vs 13ms pipeline) | Confirms **intent** equivalence — not just topic similarity. Example: _"history of machine learning"_ vs _"what is machine learning"_ scores 0.733 and is rejected at the 0.75 cutoff. |
+| **Layer 3** — Cross-Encoder     | `quora-distilroberta-base` pairwise scoring                    | ~35ms extra (borderline path) | Confirms **intent** equivalence — not just topic similarity. Example: _"history of machine learning"_ vs _"what is machine learning"_ scores 0.733 and is rejected at the 0.75 cutoff. |
 
-**Layer 3 is selectively skipped** when cosine similarity >= 0.88 (none of the 15 benchmark traps scored this high), saving ~30ms.
+**Layer 3 is selectively skipped** when cosine similarity >= 0.88 (none of the 15 benchmark traps scored this high), saving ~35ms.
 
 **Total complexity:** Vectorized numpy operations + fallback ML = **fast AND accurate**.
 
@@ -142,7 +142,7 @@ pytest tests/ -v
 This is the demo that proves the system works. Try these queries in the Query Tester:
 
 1. **First query:** `"How do I reset my password?"`
-   - Result: **CACHE MISS** — no cached entries yet, calls the LLM (~10s median with `openai/gpt-oss-20b` in the benchmark)
+   - Result: **CACHE MISS** — no cached entries yet, calls the LLM (~5–10 s depending on LLM load)
 
 2. **Second query:** `"What are the steps to recover my password?"`
    - Result: **CACHE HIT** — the system recognizes this is the same question, returns the cached answer in ~28ms (median paraphrase hit, Run 2) instead of ~10s (~370x faster)
@@ -159,25 +159,25 @@ A naive string-matching cache misses the paraphrase in query 2. Look-alike pairs
 
 ## Latency Breakdown
 
-_Server-side latencies measured in Run 1 (online backend, `openai/gpt-oss-20b`); speedup is relative to the median cache-miss latency (9,963 ms). Hit counts include the false hits of that run._
+_Server-side latencies measured in Run 3 (online backend, `openai/gpt-oss-20b`); speedup is relative to the median cache-miss latency (5,188 ms). Typo fallback is not covered by the benchmark._
 
-| Scenario                                     | Latency (median)              | Path                                  | Speedup vs LLM |
-| -------------------------------------------- | ----------------------------- | ------------------------------------- | -------------- |
-| Exact repeat                                 | **0.02 ms** (p95 0.17 ms)     | Layer 0 (string match)                | > 100,000x     |
-| Typo match (n = 3)                           | **~15 ms**                    | Layer 0 (char match, after embedding) | ~650x          |
-| Paraphrase, high confidence (cosine >= 0.88) | **~13 ms** (p95 22 ms)        | Embed + cosine (CE skipped)           | ~770x          |
-| Paraphrase, borderline pipeline              | **~43 ms** (p95 50 ms)        | Embed + cosine + BM25 + cross-encoder | ~230x          |
-| Cache miss                                   | **~9,963 ms** (p95 15,480 ms) | Embed once + LLM API call             | 1x (baseline)  |
+| Scenario                                     | Latency (median)                | Path                                  | Speedup vs LLM  |
+| -------------------------------------------- | ------------------------------- | ------------------------------------- | --------------- |
+| Exact repeat                                 | **0.02 ms** (p95 0.22 ms)       | Layer 0 (string match)                | ~259,000x       |
+| Paraphrase, high confidence (cosine >= 0.88) | **~11.89 ms**                   | Embed + cosine (CE skipped)           | ~436x           |
+| Paraphrase, borderline pipeline              | **~46.86 ms**                   | Embed + cosine + BM25 + cross-encoder | ~111x           |
+| Paraphrase overall median                    | **16.07 ms** (p95 59.59 ms)     | Embed + cosine / cross-encoder        | ~323x           |
+| Cache miss                                   | **~5,188.28 ms** (p95 14,580.65 ms) | Embed once + LLM API call         | 1x (baseline)   |
 
-> **Note:** Semantic hits are bounded by CPU neural-network inference: 13-43 ms median on the online backend, 27.82 ms median paraphrase hits on the local server (Run 2). Cache miss latency is dominated by the LLM call.
+> **Note:** Semantic hits are bounded by CPU neural-network inference: ~12–47 ms median paths on the online backend. Cache miss latency is dominated by the LLM call.
 
 ---
 
 ## Empirical Benchmark & Parameter Tuning Results
 
-To validate the cache under real-world and adversarial conditions, we benchmarked the system across 90 requests spanning 15 canonical queries, 45 paraphrases, 15 adversarial semantic traps, and 15 exact repeats ([`tests/benchmark.py`](tests/benchmark.py) & [`tests/calibrate.py`](tests/calibrate.py); raw output in [`tests/results_run1.json`](tests/results_run1.json) for Run 1 and [`tests/results.json`](tests/results.json) for Run 2). Both runs used the same LLM (`openai/gpt-oss-20b`).
+To validate the cache under real-world and adversarial conditions, we benchmarked the system across 90 requests spanning 15 canonical queries, 45 paraphrases, 15 adversarial semantic traps, and 15 exact repeats ([`tests/benchmark.py`](tests/benchmark.py) & [`tests/calibrate.py`](tests/calibrate.py); raw output in [`tests/results_run1.json`](tests/results_run1.json) for Run 1, [`tests/results_run2.json`](tests/results_run2.json) for Run 2, and [`tests/results_run3_online_strict.json`](tests/results_run3_online_strict.json) for Run 3). All three runs used the same LLM (`openai/gpt-oss-20b`).
 
-Here is the full documented progression from the baseline run (original backend, online deployment) to the calibrated zero-trap configuration (changed parameters, local server):
+Here is the full documented progression across three runs — baseline (original backend, online), calibrated local, and calibrated online:
 
 ### Run 1: Initial Benchmark (Before Calibration / Baseline Defaults)
 
@@ -218,6 +218,25 @@ _Measured from 90 requests across 15 distinct query intents on a local server (`
 
 ---
 
+### Run 3: Online Calibrated Benchmark (Zero-Trap Parameters on Live Space)
+
+_Measured from 90 requests across 15 distinct query intents against the live online deployment on Hugging Face Spaces (`benchmark.py`), with calibrated STRICT settings (`char_thresh=0.95`, `crossencoder=0.75`, `cosine=0.72`). Raw data in [`tests/results_run3_online_strict.json`](tests/results_run3_online_strict.json)._
+
+| Scenario              | Server Latency (Median) | p95 Latency  | Path                            | Speedup vs LLM |
+| --------------------- | ----------------------- | ------------ | ------------------------------- | -------------- |
+| Exact repeat          | **0.02 ms**             | 0.22 ms      | Layer 0 (string short-circuit)  | > 100,000x     |
+| Paraphrase hit        | **16.07 ms**            | 59.59 ms     | Embed + Cosine / Cross-Encoder  | ~320x          |
+| Cache miss (LLM call) | **5,188.28 ms**         | 14,580.65 ms | Embed once + LLM API generation | 1x (baseline)  |
+
+> **Benchmark Summary (Run 3 - Online Calibrated):**
+>
+> - **Trap False-Positive Rate:** **0.0% (0 / 15 traps)** — _Zero wrong answers served on adversarial traps on live deployment! Note: 0/15 is in-sample; true false-positive rate could be up to about 20%._
+> - **Paraphrase Hit Rate:** **moderate recall (68.9%)** (31 / 45)
+> - **Exact Repeat Hit Rate:** **100.0%** (15 / 15)
+> - **LLM Calls Avoided:** **51.1%** (46 / 90 total queries)
+
+---
+
 ### Parameter Impact: Run 1 vs. Run 2 Comparison
 
 | Metric                       | Run 1: Baseline Defaults (`char=0.85, ce=0.25`) | Run 2: Calibrated Zero-Trap (`char=0.95, ce=0.75`) | Why the Change Matters                                                                                                                        |
@@ -227,6 +246,20 @@ _Measured from 90 requests across 15 distinct query intents on a local server (`
 | **LLM Calls Avoided**        | **67.8%** (61 / 90)                             | **51.1%** (46 / 90)                                | 15 fewer calls avoided; in exchange, no wrong cached answer was served on the 15 traps in this benchmark.                                     |
 | **Exact Repeat Latency**     | **0.02 ms** (p95: 0.17 ms)                      | **0.05 ms** (p95: 0.76 ms)                         | Both sub-millisecond; the difference reflects different servers (online vs local), not the parameters.                                        |
 | **Paraphrase Match Latency** | **30.05 ms** (p95: 48.91 ms)                    | **27.82 ms** (p95: 92.19 ms)                       | Both far below an LLM roundtrip (~10 s); the difference reflects different servers, not the parameters.                                       |
+
+---
+
+### Parameter Impact: Run 1 vs. Run 3 Comparison (Like-for-Like Online Deployment)
+
+_Both runs were conducted directly against the live online deployment on Hugging Face Spaces (`https://adinathjagtap-ai-data-analysis-agent.hf.space`) using `openai/gpt-oss-20b` — same host and model. The earlier deployment (Run 1) also ran an older backend build, so the difference is not attributable to parameters alone._
+
+| Metric                       | Run 1: Online LOOSE (`char=0.85, ce=0.25`) | Run 3: Online STRICT (`char=0.95, ce=0.75`) | Why the Change Matters                                                                                                                        |
+| ---------------------------- | ------------------------------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Trap False Positives**     | **46.7%** (7 / 15) ⚠️                      | **0.0%** (0 / 15) ✅                        | Adversarial traps like _"linear search"_ vs _"binary search"_ or _"upgrade"_ vs _"cancel"_ are completely blocked on the live production backend. |
+| **Paraphrase Hit Rate**      | **84.4%** (38 / 45)                        | **68.9%** (31 / 45)                         | Stricter cutoffs prevent serving incorrect cached answers to adversarial traps while retaining moderate recall (68.9%).                       |
+| **LLM Calls Avoided**        | **67.8%** (61 / 90)                        | **51.1%** (46 / 90)                         | 46 expensive LLM API calls avoided on the live backend with zero false positives.                                                            |
+| **Exact Repeat Latency**     | **0.02 ms** (p95: 0.17 ms)                 | **0.02 ms** (p95: 0.22 ms)                  | Sub-millisecond string short-circuit (< 1ms) in both runs on the live cloud host.                                                             |
+| **Paraphrase Match Latency** | **30.05 ms** (p95: 48.91 ms)               | **16.07 ms** (p95: 59.59 ms)                | CPU neural verification on the live deployment is > 300x faster than calling the LLM (~5.2s median miss).                                    |
 
 #### Root Cause Analysis & Fixes:
 
@@ -255,16 +288,47 @@ The calibration picks the setting with zero false positives and the highest para
 
 ## Environment Variables
 
-| Variable                       | Default              | Description                           |
-| ------------------------------ | -------------------- | ------------------------------------- |
-| `GROQ_API_KEY`                 | _(required)_         | Your Groq API key                     |
-| `GROQ_MODEL`                   | `openai/gpt-oss-20b` | LLM model to use                      |
-| `CACHE_SIMILARITY_THRESHOLD`   | `0.72`               | Min cosine similarity for Layer 1     |
-| `CACHE_BM25_MIN_OVERLAP`       | `0.3`                | Min normalized BM25 score for Layer 2 |
-| `CACHE_CROSSENCODER_MIN_SCORE` | `0.75`               | Min cross-encoder score for Layer 3   |
-| `CACHE_PERSIST_PATH`           | `./cache_store.db`   | SQLite database file path             |
+| Variable                            | Default              | Description                                           |
+| ----------------------------------- | -------------------- | ----------------------------------------------------- |
+| `GROQ_API_KEY`                      | _(required)_         | Your Groq API key                                     |
+| `GROQ_MODEL`                        | `openai/gpt-oss-20b` | LLM model to use                                      |
+| `CACHE_SIMILARITY_THRESHOLD`        | `0.72`               | Min cosine similarity for Layer 1                     |
+| `CACHE_BM25_MIN_OVERLAP`            | `0.3`                | Min normalized BM25 score for Layer 2                 |
+| `CACHE_CROSSENCODER_MIN_SCORE`      | `0.75`               | Min cross-encoder score for Layer 3                   |
+| `CACHE_CHAR_SIMILARITY_THRESHOLD`   | `0.95`               | Min char-level similarity for typo fallback (Layer 0) |
+| `CACHE_PERSIST_PATH`                | `./cache_store.db`   | SQLite database file path                             |
 
 All thresholds can also be **tuned live** from the dashboard settings panel without restarting the server.
+
+---
+
+## Strict vs Loose Profile
+
+The two calibrated profiles are the settings used for the two benchmark runs:
+
+| Profile | Label | Where run | `CACHE_CROSSENCODER_MIN_SCORE` | `CACHE_CHAR_SIMILARITY_THRESHOLD` |
+| ------- | ----- | --------- | ------------------------------ | --------------------------------- |
+| **STRICT** (calibrated, Run 2 defaults) | Run 2 | Local server      | `0.75` | `0.95` |
+| **LOOSE** (original, Run 1 baseline)    | Run 1 | Online deployment | `0.25` | `0.85` |
+| **STRICT** (calibrated, Run 3)          | Run 3 | Online deployment | `0.75` | `0.95` |
+
+> **Note:** LOOSE env values may not reproduce Run 1 exactly because Run 1 also used an older backend build.
+
+**Run 1** — online deployment, LOOSE settings. 84.4% paraphrase hit rate, 46.7% trap false-positive rate.  
+**Run 2** — local server, STRICT settings. 68.9% paraphrase hit rate, 0.0% trap false-positive rate.  
+**Run 3** — online deployment, STRICT settings. 68.9% paraphrase hit rate, 0.0% trap false-positive rate (0 / 15 traps), 51.1% LLM calls avoided (46 / 90). Exact repeat median latency: 0.02 ms. Paraphrase hit median latency: 16.07 ms.
+
+To switch between profiles, copy these blocks into your `.env`:
+
+```env
+# STRICT profile (Run 2 calibrated defaults — zero trap false positives):
+CACHE_CROSSENCODER_MIN_SCORE=0.75
+CACHE_CHAR_SIMILARITY_THRESHOLD=0.95
+
+# LOOSE profile (Run 1 original settings — higher hit rate, more false positives):
+# CACHE_CROSSENCODER_MIN_SCORE=0.25
+# CACHE_CHAR_SIMILARITY_THRESHOLD=0.85
+```
 
 ---
 
@@ -276,7 +340,8 @@ All thresholds can also be **tuned live** from the dashboard settings panel with
 | `/v1/chat/completions` | POST   | Main proxy — OpenAI-compatible request shape                    |
 | `/stats`               | GET    | Running totals (requests, hits, $ saved, time saved, query log) |
 | `/health`              | GET    | Liveness probe                                                  |
-| `/config`              | POST   | Read/update verification thresholds at runtime                  |
+| `/config`              | GET    | Read current thresholds and model names (read-only)             |
+| `/config`              | POST   | Update mutable verification thresholds at runtime               |
 
 ### Example API Call
 
@@ -342,12 +407,14 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 ```
 semantic-cache/
 ├── .env.example              # Environment variable template
+├── .gitignore                # Git ignore rules
 ├── requirements.txt          # Pinned Python dependencies
 ├── README.md                 # This file
-├── docs/                     # Documentation
-│   ├── CODE_FLOW.md          # Function-level data flow documentation
+├── docs/                     # Documentation & GitHub Pages frontend
 │   ├── TECHNICAL_DECISIONS.md # Library & algorithm rationale
 │   ├── CHANGES.md            # Optimization changelog
+│   ├── index.html            # GitHub Pages frontend (points to HF backend)
+│   ├── CNAME                 # Custom domain for GitHub Pages (if set)
 │   └── semantic_cache_architecture.png
 ├── cache_store.db            # SQLite cache (auto-created on first run)
 │
@@ -371,7 +438,8 @@ semantic-cache/
     ├── benchmark.py           # Live 90-request benchmark runner
     ├── calibrate.py           # Offline threshold calibration (grid search)
     ├── results_run1.json      # Measured results from the baseline run (Run 1)
-    └── results.json           # Measured results from the calibrated run (Run 2)
+    ├── results_run2.json      # Measured results from the calibrated run (Run 2)
+    └── results_run3_online_strict.json # Measured results from online strict run (Run 3)
 ```
 
 ---

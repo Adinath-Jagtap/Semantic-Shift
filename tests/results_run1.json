@@ -1,7 +1,9 @@
 {
   "summary": {
     "machine": "Windows-10-10.0.26300-SP0",
-    "processor": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+    "note": "online deployment, STRICT (ce=0.75, char=0.95, cosine=0.72)",
+    "url": "https://adinathjagtap-ai-data-analysis-agent.hf.space",
+    "timestamp_utc": "2026-11-19T11:17:10.225986Z",
     "total_requests": 90,
     "paraphrases": 45,
     "paraphrase_hit_rate_pct": 84.4,

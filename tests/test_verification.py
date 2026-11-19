@@ -1,5 +1,5 @@
 """
-Unit tests for the three-layer verification pipeline.
+Unit tests for the four-layer verification pipeline.
 
 These are real pytest cases — not placeholders. They test the core logic
 that determines cache hit vs. miss, including the critical "trap pair"

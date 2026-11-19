@@ -1,0 +1,971 @@
+{
+  "summary": {
+    "label": "Run 3",
+    "note": "online deployment, STRICT (ce=0.75, char=0.95, cosine=0.72)",
+    "url": "https://adinathjagtap-ai-data-analysis-agent.hf.space",
+    "timestamp_utc": "2026-11-19T11:17:10.225986Z",
+    "backend_config": {
+      "similarity_threshold": 0.72,
+      "bm25_min_overlap": 0.3,
+      "crossencoder_min_score": 0.75,
+      "char_similarity_threshold": 0.95,
+      "llm_model": "openai/gpt-oss-20b",
+      "crossencoder_model": "cross-encoder/quora-distilroberta-base",
+      "embedding_model": "all-MiniLM-L6-v2"
+    },
+    "machine": "Windows-10-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+    "total_requests": 90,
+    "paraphrases": 45,
+    "paraphrase_hit_rate_pct": 68.9,
+    "traps": 15,
+    "trap_false_positives": 0,
+    "trap_false_positive_rate_pct": 0.0,
+    "exact_repeat_hit_rate_pct": 100.0,
+    "llm_calls_made": 44,
+    "llm_calls_avoided": 46,
+    "llm_calls_avoided_pct": 51.1,
+    "latency_miss": {
+      "n": 44,
+      "median_ms": 5188.28,
+      "p95_ms": 14580.65
+    },
+    "latency_paraphrase_hit": {
+      "n": 31,
+      "median_ms": 16.07,
+      "p95_ms": 59.59
+    },
+    "latency_exact_hit": {
+      "n": 15,
+      "median_ms": 0.02,
+      "p95_ms": 0.22
+    },
+    "false_positive_examples": [],
+    "missed_paraphrases": [
+      "Can you help me change my password if I can't log in?",
+      "I want to stop my monthly plan, how?",
+      "Steps for unsubscribing from the paid plan?",
+      "Define machine learning in simple words.",
+      "Explain machine learning to a beginner.",
+      "How can I get Python running on Windows 11?",
+      "What makes an HTTPS connection safe?",
+      "How can I roll back the last commit in git?",
+      "How can I slim down without harming my health?",
+      "Why do developers use Docker?",
+      "What problem does Docker solve?",
+      "Walk me through binary search.",
+      "How should a beginner start learning to code?",
+      "Advice for learning programming from scratch?"
+    ]
+  },
+  "rows": {
+    "A_warm": [
+      {
+        "q": "How do I reset my password?",
+        "cached": false,
+        "latency_ms": 1615.35,
+        "wall_ms": 1860.036099998979,
+        "method": "empty_cache",
+        "similarity": null,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I cancel my subscription?",
+        "cached": false,
+        "latency_ms": 845.69,
+        "wall_ms": 1070.4565000014554,
+        "method": "no_similarity_match",
+        "similarity": 0.3917,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is machine learning?",
+        "cached": false,
+        "latency_ms": 1529.2,
+        "wall_ms": 1770.2365000004647,
+        "method": "no_similarity_match",
+        "similarity": 0.1492,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I install Python on Windows?",
+        "cached": false,
+        "latency_ms": 2129.62,
+        "wall_ms": 2372.239099997387,
+        "method": "no_similarity_match",
+        "similarity": 0.1797,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the difference between a list and a tuple in Python?",
+        "cached": false,
+        "latency_ms": 1376.32,
+        "wall_ms": 1647.3365999991074,
+        "method": "no_similarity_match",
+        "similarity": 0.2332,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How does HTTPS keep data secure?",
+        "cached": false,
+        "latency_ms": 2166.75,
+        "wall_ms": 2425.8999999983644,
+        "method": "no_similarity_match",
+        "similarity": 0.1517,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I center a div in CSS?",
+        "cached": false,
+        "latency_ms": 1992.27,
+        "wall_ms": 2218.2192000000214,
+        "method": "no_similarity_match",
+        "similarity": 0.1711,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is an API?",
+        "cached": false,
+        "latency_ms": 1709.9,
+        "wall_ms": 3076.238400000875,
+        "method": "no_similarity_match",
+        "similarity": 0.3291,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I undo my last git commit?",
+        "cached": false,
+        "latency_ms": 1028.65,
+        "wall_ms": 1276.6875000015716,
+        "method": "no_similarity_match",
+        "similarity": 0.383,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the capital of France?",
+        "cached": false,
+        "latency_ms": 4377.7,
+        "wall_ms": 4603.98449999775,
+        "method": "no_similarity_match",
+        "similarity": 0.1472,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I lose weight safely?",
+        "cached": false,
+        "latency_ms": 2435.86,
+        "wall_ms": 2661.9671000007656,
+        "method": "no_similarity_match",
+        "similarity": 0.2305,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I write a good resume?",
+        "cached": false,
+        "latency_ms": 2351.42,
+        "wall_ms": 3010.1684000001114,
+        "method": "no_similarity_match",
+        "similarity": 0.134,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is Docker used for?",
+        "cached": false,
+        "latency_ms": 6712.47,
+        "wall_ms": 6928.9595000009285,
+        "method": "no_similarity_match",
+        "similarity": 0.2131,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How does a binary search work?",
+        "cached": false,
+        "latency_ms": 2183.32,
+        "wall_ms": 3973.0877000001783,
+        "method": "no_similarity_match",
+        "similarity": 0.2862,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the best way to learn programming?",
+        "cached": false,
+        "latency_ms": 7355.86,
+        "wall_ms": 7597.088700000313,
+        "method": "no_similarity_match",
+        "similarity": 0.2817,
+        "ce": null,
+        "matched": null
+      }
+    ],
+    "B_paraphrase": [
+      {
+        "q": "What are the steps to recover my password?",
+        "cached": true,
+        "latency_ms": 64.41,
+        "wall_ms": 297.73219999697176,
+        "method": "full_pipeline",
+        "similarity": 0.8399,
+        "ce": 0.994,
+        "matched": "How do I reset my password?"
+      },
+      {
+        "q": "I forgot my password, how can I get back in?",
+        "cached": true,
+        "latency_ms": 59.42,
+        "wall_ms": 291.95379999873694,
+        "method": "full_pipeline",
+        "similarity": 0.819,
+        "ce": 0.9945,
+        "matched": "How do I reset my password?"
+      },
+      {
+        "q": "Can you help me change my password if I can't log in?",
+        "cached": false,
+        "latency_ms": 2996.4,
+        "wall_ms": 3221.0850000010396,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7443,
+        "ce": 0.0014,
+        "matched": null
+      },
+      {
+        "q": "What is the process to end my subscription?",
+        "cached": true,
+        "latency_ms": 39.88,
+        "wall_ms": 638.4308000015153,
+        "method": "full_pipeline",
+        "similarity": 0.8382,
+        "ce": 0.9545,
+        "matched": "How do I cancel my subscription?"
+      },
+      {
+        "q": "I want to stop my monthly plan, how?",
+        "cached": false,
+        "latency_ms": 5052.48,
+        "wall_ms": 5282.627199998387,
+        "method": "no_similarity_match",
+        "similarity": 0.5547,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "Steps for unsubscribing from the paid plan?",
+        "cached": false,
+        "latency_ms": 1370.55,
+        "wall_ms": 1597.8649999997288,
+        "method": "no_similarity_match",
+        "similarity": 0.5254,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "Can you explain what machine learning means?",
+        "cached": true,
+        "latency_ms": 11.33,
+        "wall_ms": 225.17139999763458,
+        "method": "high_confidence",
+        "similarity": 0.9026,
+        "ce": "skipped",
+        "matched": "What is machine learning?"
+      },
+      {
+        "q": "Define machine learning in simple words.",
+        "cached": false,
+        "latency_ms": 14927.83,
+        "wall_ms": 15146.557699998084,
+        "method": "crossencoder_rejected",
+        "similarity": 0.8438,
+        "ce": 0.0146,
+        "matched": null
+      },
+      {
+        "q": "Explain machine learning to a beginner.",
+        "cached": false,
+        "latency_ms": 1710.38,
+        "wall_ms": 1925.509199998487,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7707,
+        "ce": 0.1505,
+        "matched": null
+      },
+      {
+        "q": "What are the steps to set up Python on a Windows PC?",
+        "cached": true,
+        "latency_ms": 40.08,
+        "wall_ms": 254.19010000041453,
+        "method": "full_pipeline",
+        "similarity": 0.8229,
+        "ce": 0.9718,
+        "matched": "How do I install Python on Windows?"
+      },
+      {
+        "q": "Guide me through installing Python on Windows.",
+        "cached": true,
+        "latency_ms": 36.34,
+        "wall_ms": 249.6790000004694,
+        "method": "full_pipeline",
+        "similarity": 0.8605,
+        "ce": 0.8244,
+        "matched": "How do I install Python on Windows?"
+      },
+      {
+        "q": "How can I get Python running on Windows 11?",
+        "cached": false,
+        "latency_ms": 7080.56,
+        "wall_ms": 7305.8231999966665,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7719,
+        "ce": 0.0185,
+        "matched": null
+      },
+      {
+        "q": "How do lists and tuples differ in Python?",
+        "cached": true,
+        "latency_ms": 11.49,
+        "wall_ms": 237.7085000007355,
+        "method": "high_confidence",
+        "similarity": 0.9398,
+        "ce": "skipped",
+        "matched": "What is the difference between a list and a tuple in Python?"
+      },
+      {
+        "q": "Python list vs tuple, what changes?",
+        "cached": true,
+        "latency_ms": 12.76,
+        "wall_ms": 229.0861000001314,
+        "method": "high_confidence",
+        "similarity": 0.918,
+        "ce": "skipped",
+        "matched": "What is the difference between a list and a tuple in Python?"
+      },
+      {
+        "q": "Explain how a tuple is different from a list in Python.",
+        "cached": true,
+        "latency_ms": 11.65,
+        "wall_ms": 295.1150000008056,
+        "method": "high_confidence",
+        "similarity": 0.929,
+        "ce": "skipped",
+        "matched": "What is the difference between a list and a tuple in Python?"
+      },
+      {
+        "q": "Why is HTTPS secure?",
+        "cached": true,
+        "latency_ms": 36.04,
+        "wall_ms": 247.22549999933108,
+        "method": "full_pipeline",
+        "similarity": 0.7849,
+        "ce": 0.9625,
+        "matched": "How does HTTPS keep data secure?"
+      },
+      {
+        "q": "Explain how HTTPS protects my data.",
+        "cached": true,
+        "latency_ms": 44.5,
+        "wall_ms": 258.7781999973231,
+        "method": "full_pipeline",
+        "similarity": 0.8457,
+        "ce": 0.9911,
+        "matched": "How does HTTPS keep data secure?"
+      },
+      {
+        "q": "What makes an HTTPS connection safe?",
+        "cached": false,
+        "latency_ms": 9233.42,
+        "wall_ms": 9463.382800000545,
+        "method": "no_similarity_match",
+        "similarity": 0.7066,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the way to horizontally and vertically center a div using CSS?",
+        "cached": true,
+        "latency_ms": 49.23,
+        "wall_ms": 264.3841999997676,
+        "method": "full_pipeline",
+        "similarity": 0.8676,
+        "ce": 0.9747,
+        "matched": "How do I center a div in CSS?"
+      },
+      {
+        "q": "CSS: how to put a div in the middle of the page?",
+        "cached": true,
+        "latency_ms": 59.59,
+        "wall_ms": 277.17570000095293,
+        "method": "full_pipeline",
+        "similarity": 0.7426,
+        "ce": 0.8893,
+        "matched": "How do I center a div in CSS?"
+      },
+      {
+        "q": "Best method to center a div in CSS?",
+        "cached": true,
+        "latency_ms": 10.66,
+        "wall_ms": 226.40540000065812,
+        "method": "high_confidence",
+        "similarity": 0.9315,
+        "ce": "skipped",
+        "matched": "How do I center a div in CSS?"
+      },
+      {
+        "q": "Can you explain what an API is?",
+        "cached": true,
+        "latency_ms": 11.33,
+        "wall_ms": 232.87970000092173,
+        "method": "high_confidence",
+        "similarity": 0.9439,
+        "ce": "skipped",
+        "matched": "What is an API?"
+      },
+      {
+        "q": "Explain the meaning of API.",
+        "cached": true,
+        "latency_ms": 16.2,
+        "wall_ms": 241.3020999993023,
+        "method": "high_confidence",
+        "similarity": 0.9189,
+        "ce": "skipped",
+        "matched": "What is an API?"
+      },
+      {
+        "q": "What does API stand for and what does it do?",
+        "cached": true,
+        "latency_ms": 12.25,
+        "wall_ms": 1455.1979999996547,
+        "method": "high_confidence",
+        "similarity": 0.9191,
+        "ce": "skipped",
+        "matched": "What is an API?"
+      },
+      {
+        "q": "What is the command to revert my most recent git commit?",
+        "cached": true,
+        "latency_ms": 14.6,
+        "wall_ms": 229.48249999899417,
+        "method": "high_confidence",
+        "similarity": 0.8848,
+        "ce": "skipped",
+        "matched": "How do I undo my last git commit?"
+      },
+      {
+        "q": "I committed by mistake, how can I undo it in git?",
+        "cached": true,
+        "latency_ms": 12.12,
+        "wall_ms": 287.4002999997174,
+        "method": "high_confidence",
+        "similarity": 0.9041,
+        "ce": "skipped",
+        "matched": "How do I undo my last git commit?"
+      },
+      {
+        "q": "How can I roll back the last commit in git?",
+        "cached": false,
+        "latency_ms": 8474.08,
+        "wall_ms": 8715.169899998727,
+        "method": "crossencoder_rejected",
+        "similarity": 0.8403,
+        "ce": 0.2514,
+        "matched": null
+      },
+      {
+        "q": "Which city is France's capital?",
+        "cached": true,
+        "latency_ms": 10.77,
+        "wall_ms": 226.53460000219638,
+        "method": "high_confidence",
+        "similarity": 0.9345,
+        "ce": "skipped",
+        "matched": "What is the capital of France?"
+      },
+      {
+        "q": "Tell me the capital city of France.",
+        "cached": true,
+        "latency_ms": 13.42,
+        "wall_ms": 243.317799999204,
+        "method": "high_confidence",
+        "similarity": 0.9177,
+        "ce": "skipped",
+        "matched": "What is the capital of France?"
+      },
+      {
+        "q": "France's capital is which city?",
+        "cached": true,
+        "latency_ms": 20.99,
+        "wall_ms": 260.2425000004587,
+        "method": "high_confidence",
+        "similarity": 0.8955,
+        "ce": "skipped",
+        "matched": "What is the capital of France?"
+      },
+      {
+        "q": "What is a safe way to reduce body weight?",
+        "cached": true,
+        "latency_ms": 54.92,
+        "wall_ms": 523.6485999994329,
+        "method": "full_pipeline",
+        "similarity": 0.7379,
+        "ce": 0.9973,
+        "matched": "How do I lose weight safely?"
+      },
+      {
+        "q": "Healthy ways to lose weight?",
+        "cached": true,
+        "latency_ms": 59.34,
+        "wall_ms": 522.4895999999717,
+        "method": "full_pipeline",
+        "similarity": 0.812,
+        "ce": 0.9954,
+        "matched": "How do I lose weight safely?"
+      },
+      {
+        "q": "How can I slim down without harming my health?",
+        "cached": false,
+        "latency_ms": 4180.18,
+        "wall_ms": 5038.430900000094,
+        "method": "no_similarity_match",
+        "similarity": 0.6753,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What makes a strong resume and how do I write one?",
+        "cached": true,
+        "latency_ms": 11.89,
+        "wall_ms": 228.09589999815216,
+        "method": "high_confidence",
+        "similarity": 0.8834,
+        "ce": "skipped",
+        "matched": "How do I write a good resume?"
+      },
+      {
+        "q": "Tips for writing an effective resume?",
+        "cached": true,
+        "latency_ms": 19.77,
+        "wall_ms": 454.89380000071833,
+        "method": "high_confidence",
+        "similarity": 0.9207,
+        "ce": "skipped",
+        "matched": "How do I write a good resume?"
+      },
+      {
+        "q": "How should I structure my resume?",
+        "cached": true,
+        "latency_ms": 38.22,
+        "wall_ms": 1396.7219999976805,
+        "method": "full_pipeline",
+        "similarity": 0.7906,
+        "ce": 0.8513,
+        "matched": "How do I write a good resume?"
+      },
+      {
+        "q": "Why do developers use Docker?",
+        "cached": false,
+        "latency_ms": 9754.87,
+        "wall_ms": 10180.67400000291,
+        "method": "crossencoder_rejected",
+        "similarity": 0.8365,
+        "ce": 0.0004,
+        "matched": null
+      },
+      {
+        "q": "Explain what Docker is for.",
+        "cached": true,
+        "latency_ms": 10.88,
+        "wall_ms": 235.60070000166888,
+        "method": "high_confidence",
+        "similarity": 0.9547,
+        "ce": "skipped",
+        "matched": "What is Docker used for?"
+      },
+      {
+        "q": "What problem does Docker solve?",
+        "cached": false,
+        "latency_ms": 1539.97,
+        "wall_ms": 1757.4625999986893,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7348,
+        "ce": 0.0003,
+        "matched": null
+      },
+      {
+        "q": "Explain the binary search algorithm.",
+        "cached": true,
+        "latency_ms": 16.07,
+        "wall_ms": 1225.785000002361,
+        "method": "high_confidence",
+        "similarity": 0.9123,
+        "ce": "skipped",
+        "matched": "How does a binary search work?"
+      },
+      {
+        "q": "How does binary search find an item?",
+        "cached": true,
+        "latency_ms": 11.38,
+        "wall_ms": 470.12460000041756,
+        "method": "high_confidence",
+        "similarity": 0.9094,
+        "ce": "skipped",
+        "matched": "How does a binary search work?"
+      },
+      {
+        "q": "Walk me through binary search.",
+        "cached": false,
+        "latency_ms": 1777.77,
+        "wall_ms": 2210.3355999970518,
+        "method": "no_similarity_match",
+        "similarity": 0.7151,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How should a beginner start learning to code?",
+        "cached": false,
+        "latency_ms": 16419.56,
+        "wall_ms": 16853.137400001287,
+        "method": "no_similarity_match",
+        "similarity": 0.6831,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the most effective way to learn programming?",
+        "cached": true,
+        "latency_ms": 11.31,
+        "wall_ms": 441.61520000125165,
+        "method": "high_confidence",
+        "similarity": 0.9524,
+        "ce": "skipped",
+        "matched": "What is the best way to learn programming?"
+      },
+      {
+        "q": "Advice for learning programming from scratch?",
+        "cached": false,
+        "latency_ms": 12444.83,
+        "wall_ms": 12868.192100002489,
+        "method": "crossencoder_rejected",
+        "similarity": 0.8252,
+        "ce": 0.0051,
+        "matched": null
+      }
+    ],
+    "C_trap": [
+      {
+        "q": "How do I delete my account?",
+        "cached": false,
+        "latency_ms": 12475.36,
+        "wall_ms": 12690.729800000554,
+        "method": "no_similarity_match",
+        "similarity": 0.5803,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I upgrade my subscription?",
+        "cached": false,
+        "latency_ms": 5324.08,
+        "wall_ms": 5555.540800000017,
+        "method": "no_similarity_match",
+        "similarity": 0.6493,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the history of machine learning?",
+        "cached": false,
+        "latency_ms": 6278.36,
+        "wall_ms": 6539.1825000006065,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7447,
+        "ce": 0.7329,
+        "matched": null
+      },
+      {
+        "q": "How do I uninstall Python on Windows?",
+        "cached": false,
+        "latency_ms": 12577.28,
+        "wall_ms": 12798.669899999368,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7568,
+        "ce": 0.0087,
+        "matched": null
+      },
+      {
+        "q": "What is the difference between a list and a set in Python?",
+        "cached": false,
+        "latency_ms": 11134.15,
+        "wall_ms": 11352.815700000065,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7934,
+        "ce": 0.0019,
+        "matched": null
+      },
+      {
+        "q": "How do I get an HTTPS certificate for my site?",
+        "cached": false,
+        "latency_ms": 4395.77,
+        "wall_ms": 4621.98509999871,
+        "method": "no_similarity_match",
+        "similarity": 0.4511,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I make a div responsive in CSS?",
+        "cached": false,
+        "latency_ms": 13462.81,
+        "wall_ms": 13700.848899999983,
+        "method": "no_similarity_match",
+        "similarity": 0.6262,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I build an API?",
+        "cached": false,
+        "latency_ms": 14580.65,
+        "wall_ms": 14816.554200002429,
+        "method": "crossencoder_rejected",
+        "similarity": 0.7521,
+        "ce": 0.0588,
+        "matched": null
+      },
+      {
+        "q": "How do I squash my last git commits?",
+        "cached": false,
+        "latency_ms": 12685.77,
+        "wall_ms": 12904.474499999196,
+        "method": "crossencoder_rejected",
+        "similarity": 0.8063,
+        "ce": 0.0058,
+        "matched": null
+      },
+      {
+        "q": "What is the population of France?",
+        "cached": false,
+        "latency_ms": 5511.42,
+        "wall_ms": 5743.301399998018,
+        "method": "no_similarity_match",
+        "similarity": 0.7091,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I gain muscle safely?",
+        "cached": false,
+        "latency_ms": 2270.35,
+        "wall_ms": 2488.6497000006784,
+        "method": "no_similarity_match",
+        "similarity": 0.412,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I write a good cover letter?",
+        "cached": false,
+        "latency_ms": 13908.09,
+        "wall_ms": 14134.740800000145,
+        "method": "no_similarity_match",
+        "similarity": 0.6284,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How do I install Docker on Ubuntu?",
+        "cached": false,
+        "latency_ms": 10295.67,
+        "wall_ms": 10532.815999999002,
+        "method": "no_similarity_match",
+        "similarity": 0.6173,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "How does a linear search work?",
+        "cached": false,
+        "latency_ms": 10409.94,
+        "wall_ms": 10638.20879999912,
+        "method": "no_similarity_match",
+        "similarity": 0.6878,
+        "ce": null,
+        "matched": null
+      },
+      {
+        "q": "What is the best programming language to learn first?",
+        "cached": false,
+        "latency_ms": 5470.45,
+        "wall_ms": 5684.72969999857,
+        "method": "no_similarity_match",
+        "similarity": 0.7068,
+        "ce": null,
+        "matched": null
+      }
+    ],
+    "D_repeat": [
+      {
+        "q": "How do I reset my password?",
+        "cached": true,
+        "latency_ms": 0.22,
+        "wall_ms": 235.479300001316,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I reset my password?"
+      },
+      {
+        "q": "How do I cancel my subscription?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 220.9647000017867,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I cancel my subscription?"
+      },
+      {
+        "q": "What is machine learning?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 226.8919999987702,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is machine learning?"
+      },
+      {
+        "q": "How do I install Python on Windows?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 213.5664999987057,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I install Python on Windows?"
+      },
+      {
+        "q": "What is the difference between a list and a tuple in Python?",
+        "cached": true,
+        "latency_ms": 0.03,
+        "wall_ms": 217.62179999859654,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is the difference between a list and a tuple in Python?"
+      },
+      {
+        "q": "How does HTTPS keep data secure?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 214.68129999993835,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How does HTTPS keep data secure?"
+      },
+      {
+        "q": "How do I center a div in CSS?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 230.52410000309465,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I center a div in CSS?"
+      },
+      {
+        "q": "What is an API?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 1381.8723000003956,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is an API?"
+      },
+      {
+        "q": "How do I undo my last git commit?",
+        "cached": true,
+        "latency_ms": 0.03,
+        "wall_ms": 216.85710000019753,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I undo my last git commit?"
+      },
+      {
+        "q": "What is the capital of France?",
+        "cached": true,
+        "latency_ms": 0.03,
+        "wall_ms": 223.2856000009633,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is the capital of France?"
+      },
+      {
+        "q": "How do I lose weight safely?",
+        "cached": true,
+        "latency_ms": 0.03,
+        "wall_ms": 750.3945999997086,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I lose weight safely?"
+      },
+      {
+        "q": "How do I write a good resume?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 430.8097000030102,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How do I write a good resume?"
+      },
+      {
+        "q": "What is Docker used for?",
+        "cached": true,
+        "latency_ms": 0.03,
+        "wall_ms": 217.0229000003019,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is Docker used for?"
+      },
+      {
+        "q": "How does a binary search work?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 422.623400001612,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "How does a binary search work?"
+      },
+      {
+        "q": "What is the best way to learn programming?",
+        "cached": true,
+        "latency_ms": 0.02,
+        "wall_ms": 426.08909999762545,
+        "method": "exact_match",
+        "similarity": 1.0,
+        "ce": "skipped",
+        "matched": "What is the best way to learn programming?"
+      }
+    ]
+  }
+}

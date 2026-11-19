@@ -72,7 +72,6 @@ All project dependencies are explicitly pinned in `requirements.txt` to guarante
 | Embedding Dimensions | 384 |
 | Model Parameters | 22.7M |
 | Max Sequence Length | 256 tokens |
-| Inference Throughput | ~14,000 sentences/sec on CPU |
 | Quality (STS Benchmark) | 0.8489 |
 
 ### Selection Rationale
@@ -173,7 +172,7 @@ User Query
 
 1. **Layer 0 (Exact & Typo Match)**:
    - *Exact repeat*: Normalized string lookup (`_normalized_lookup`) executes in **0.02–0.05ms**, bypassing ML entirely.
-   - *Typo path*: If cosine similarity falls below threshold, `_char_similarity()` tests character-level overlap against cached entries. At threshold `0.95`, it resolves minor typos (`pythn` $\to$ `python`) in **~15ms** without false hits.
+   - *Typo path*: If cosine similarity falls below threshold, `_char_similarity()` tests character-level overlap against cached entries. At threshold `0.95`, it resolves minor typos (`pythn` $\to$ `python`) without false hits. Typo fallback latency is not covered by the benchmark dataset.
 2. **Layer 1 (Vectorized Cosine Similarity)**: Computes semantic proximity in **~13ms** (including query embedding). Matches with cosine $\ge 0.88$ are accepted immediately.
 3. **Layer 2 (BM25 Sanity Check)**: Scores keyword overlap in **~1–5ms**, populating debug telemetry.
 4. **Layer 3 (Cross-Encoder Re-ranking)**: Evaluates the single top candidate in **~30ms** for borderline cases, catching adversarial traps.
@@ -188,7 +187,7 @@ Initial benchmark runs (Run 1) demonstrated high paraphrase recall but exposed v
 |---|---|---|---|
 | `CACHE_SIMILARITY_THRESHOLD` | `0.72` | `0.72` | Maximizes candidate recall into Layer 3. Paraphrase pairs cluster in the 0.75–0.95 range. |
 | `_BORDERLINE_UPPER` | `0.88` | `0.88` | When cosine $\ge 0.88$, matches are unambiguous. None of the 15 benchmark traps scored this high, saving ~30ms by skipping Layer 3. |
-| `_CHAR_SIMILARITY_THRESHOLD` | `0.85` | `0.95` | At 0.85, 3 traps falsely matched on character overlap (*"linear search"* vs *"binary search"* at 93.1%, *"upgrade"* vs *"cancel"* at 85.7%, *"squash"* vs *"undo"* at 86.6%). Raising to 0.95 blocked all traps while retaining typos (`pythn` $\to$ `python`). |
+| `CACHE_CHAR_SIMILARITY_THRESHOLD` | `0.85` | `0.95` | At 0.85, 3 traps falsely matched on character overlap (*"linear search"* vs *"binary search"* at 93.1%, *"upgrade"* vs *"cancel"* at 85.7%, *"squash"* vs *"undo"* at 86.6%). Raising to 0.95 blocked all traps while retaining typos (`pythn` $\to$ `python`). |
 | `CACHE_CROSSENCODER_MIN_SCORE` | `0.25` | `0.75` | At 0.25, 4 contrastive traps passed Layer 3. The highest-scoring trap was *"history of ML"* vs *"what is ML"* (0.733). Setting threshold to 0.75 eliminated 100% of trap false positives (0/15 in Run 2). |
 | `CACHE_BM25_MIN_OVERLAP` | `0.3` | `0.3` | Permissive lexical baseline used for diagnostic validation rather than hard rejection. |
 
@@ -243,7 +242,7 @@ Durable Cold Path:   SQLite (cache_store.db)
 ## 10. Why Groq as the LLM Backend
 
 - **Latency Optimization**: Groq's Language Processing Units (LPUs) provide near-instant inference for generative tasks.
-- **Configurable Models**: Defaults to `openai/gpt-oss-20b` (used in benchmarks) with pluggable support for `llama-3.1-8b-instant`.
+- **Configurable Models**: Defaults to `openai/gpt-oss-20b` (used in benchmarks) with pluggable support for other Groq-hosted models.
 - **OpenAI-Compatible Spec**: Endpoints follow standard completion formats, enabling drop-in substitution with alternative providers.
 
 ---
@@ -256,9 +255,6 @@ The project provides two complementary dashboard interfaces:
 - **Single Process**: Directly served by FastAPI at `GET /` (`uvicorn backend.main:app` or `python app.py`).
 - **Zero Frontend Build Pipeline**: Vanilla HTML5, modern CSS, and vanilla JavaScript without npm, webpack, or external build steps.
 - **Interactive Telemetry**: Includes real-time KPI metrics, query test bench, verification layer inspector, and live threshold tuning sliders (`/config`).
-
-### Option B: Streamlit Dashboard (`dashboard/app.py`)
-- Provides an alternative visual analytics interface for exploratory query inspection and benchmarking.
 
 ---
 
@@ -291,10 +287,10 @@ The test suite validates semantic accuracy, performance, and threshold dynamics:
 - **90-Request Evaluation**: Evaluates 15 canonical intents, 45 paraphrases, 15 adversarial traps, and 15 exact repeats.
 - **Telemetry Verification**: Records server-side latencies across all 4 pipeline paths:
   - Exact repeats: **0.02–0.05 ms** (> 100,000x faster than LLM).
-  - Typo matches: **~15 ms** (~650x faster than LLM).
-  - High-confidence hits: **~13 ms** (~770x faster than LLM).
-  - Borderline full-pipeline hits: **~43 ms** (~230x faster than LLM).
-  - LLM cache misses: **~10,000 ms**.
+  - Typo fallback latency is not covered by the benchmark dataset.
+  - High-confidence hits: **~12 ms** (~436x faster than LLM, Run 3).
+  - Borderline full-pipeline hits: **~47 ms** (~111x faster than LLM, Run 3).
+  - LLM cache misses: **~5,188 ms** (Run 3 median).
 - **Zero-Trap Validation**: Confirmed 0.0% false-positive rate on calibrated settings (Run 2).
 
 ---

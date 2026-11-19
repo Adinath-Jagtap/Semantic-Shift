@@ -332,16 +332,16 @@
           <div class="settings-subtitle">Changes apply on save only</div>
 
           <div class="setting-row">
-            <label>Cosine Similarity <span class="val" id="sim-val">0.85</span></label>
-            <input type="range" id="sim-slider" min="0" max="1" step="0.01" value="0.85" />
+            <label>Cosine Similarity <span class="val" id="sim-val">0.72</span></label>
+            <input type="range" id="sim-slider" min="0" max="1" step="0.01" value="0.72" />
           </div>
           <div class="setting-row">
             <label>BM25 Overlap <span class="val" id="bm25-val">0.30</span></label>
             <input type="range" id="bm25-slider" min="0" max="1" step="0.01" value="0.3" />
           </div>
           <div class="setting-row">
-            <label>Cross-Encoder Score <span class="val" id="ce-val">0.50</span></label>
-            <input type="range" id="ce-slider" min="-5" max="10" step="0.1" value="0.5" />
+            <label>Cross-Encoder Score <span class="val" id="ce-val">0.75</span></label>
+            <input type="range" id="ce-slider" min="0" max="1" step="0.01" value="0.75" />
           </div>
 
           <button class="save-btn" id="save-settings-btn">Save</button>
@@ -407,7 +407,7 @@
   document.getElementById("app-name-label").textContent = APP_NAME;
   document.getElementById("repo-link").href = REPO_URL;
 
-  let currentConfig = { similarity_threshold: 0.76, bm25_min_overlap: 0.3, crossencoder_min_score: 0 };
+  let currentConfig = { similarity_threshold: 0.72, bm25_min_overlap: 0.3, crossencoder_min_score: 0.75 };
   let backendOnline = false;
 
   // ── DOM refs ──────────────────────────────────────
@@ -502,7 +502,15 @@
   navDashboard.addEventListener("click", () => switchView("dashboard"));
 
   // ── Backend status + config ───────────────────────
+  async function getConfig(){
+    // GET /config — read-only, used on page load and when settings panel opens.
+    const res = await fetch(`${BACKEND_URL}/config`);
+    if(!res.ok) throw new Error(`Config request failed (HTTP ${res.status})`);
+    return res.json();
+  }
+
   async function fetchConfig(body){
+    // POST /config — used to update mutable thresholds from the settings panel.
     const res = await fetch(`${BACKEND_URL}/config`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -524,7 +532,7 @@
     ceSlider.value = cfg.crossencoder_min_score;
     simVal.textContent = Number(cfg.similarity_threshold).toFixed(2);
     bm25Val.textContent = Number(cfg.bm25_min_overlap).toFixed(2);
-    ceVal.textContent = Number(cfg.crossencoder_min_score).toFixed(1);
+    ceVal.textContent = Number(cfg.crossencoder_min_score).toFixed(2);
   }
 
   async function refreshHealth(){
@@ -548,7 +556,7 @@
     settingsMsg.className = "settings-msg";
     // Only fetch config when first opening — not on every mouseenter.
     if(!alreadyOpen){
-      fetchConfig({}).then(cfg => {
+      getConfig().then(cfg => {
         backendOnline = true; updateStatusUI();
         currentConfig = cfg;
         populateSettingsInputs(currentConfig);
@@ -569,7 +577,7 @@
 
   simSlider.addEventListener("input", () => simVal.textContent = Number(simSlider.value).toFixed(2));
   bm25Slider.addEventListener("input", () => bm25Val.textContent = Number(bm25Slider.value).toFixed(2));
-  ceSlider.addEventListener("input", () => ceVal.textContent = Number(ceSlider.value).toFixed(1));
+  ceSlider.addEventListener("input", () => ceVal.textContent = Number(ceSlider.value).toFixed(2));
 
   saveSettingsBtn.addEventListener("click", async () => {
     saveSettingsBtn.disabled = true;
@@ -805,7 +813,8 @@
   (async function init(){
     autoResizeInput();
     try{
-      const cfg = await fetchConfig({});
+      // GET /config on page load — always shows the backend's real values.
+      const cfg = await getConfig();
       currentConfig = cfg;
       backendOnline = true;
     }catch(e){

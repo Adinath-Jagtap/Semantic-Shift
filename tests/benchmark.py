@@ -1,7 +1,7 @@
 """
 Semantic-Shift benchmark: produces REAL numbers for the video.
 Run the server first (uvicorn backend.main:app or python app.py), with an EMPTY cache (delete cache_store.db), then:
-    python tests/benchmark.py --url http://127.0.0.1:8000 --out tests/results.json
+    python tests/benchmark.py --url http://127.0.0.1:8000 --out tests/results_run3_online_strict.json --label "Run 3" --note "online deployment, STRICT"
 Phases (each query is sent once, in this order):
   A warm      canonical question per intent          expect MISS (LLM call)
   B paraphase 3 paraphrases per intent               expect HIT  (same intent)
@@ -10,7 +10,7 @@ Phases (each query is sent once, in this order):
 Reports: paraphrase hit rate, trap false-positive rate, LLM calls avoided, latency by path.
 Tell viewers the dataset size (printed at the end) and the machine you ran it on.
 """
-import argparse, json, statistics, time, platform
+import argparse, json, statistics, time, platform, datetime
 import httpx
 
 INTENTS = [
@@ -62,22 +62,27 @@ INTENTS = [
 ]
 
 
-def ask(client, url, q):
-    t0 = time.perf_counter()
-    r = client.post(f"{url}/v1/chat/completions", json={"messages": [{"role": "user", "content": q}]}, timeout=60)
-    wall = (time.perf_counter() - t0) * 1000
-    r.raise_for_status()
-    d = r.json()
-    dbg = d.get("debug", {})
-    cached = bool(d.get("cached"))
-    if not cached:
-        time.sleep(0.5)  # pace LLM calls to avoid Groq rate-limiting inflation
-    sim = dbg.get("similarity")
-    if sim is None:
-        sim = dbg.get("best_score")
-    return {"q": q, "cached": cached, "latency_ms": d.get("latency_ms", wall),
-            "wall_ms": wall, "method": dbg.get("method") or dbg.get("reason"),
-            "similarity": sim, "ce": dbg.get("crossencoder_score"), "matched": dbg.get("matched_query")}
+def ask(client, url, q, max_retries=3):
+    for attempt in range(max_retries):
+        t0 = time.perf_counter()
+        r = client.post(f"{url}/v1/chat/completions", json={"messages": [{"role": "user", "content": q}]}, timeout=60)
+        wall = (time.perf_counter() - t0) * 1000
+        if r.status_code == 502 and attempt < max_retries - 1:
+            print(f"\n[Groq 429/502 rate limit] Backing off 12s before retry {attempt+1}/{max_retries} for query: {q[:30]}...")
+            time.sleep(12)
+            continue
+        r.raise_for_status()
+        d = r.json()
+        dbg = d.get("debug", {})
+        cached = bool(d.get("cached"))
+        if not cached:
+            time.sleep(2.0)  # pace LLM calls to avoid Groq rate-limiting inflation
+        sim = dbg.get("similarity")
+        if sim is None:
+            sim = dbg.get("best_score")
+        return {"q": q, "cached": cached, "latency_ms": d.get("latency_ms", wall),
+                "wall_ms": wall, "method": dbg.get("method") or dbg.get("reason"),
+                "similarity": sim, "ce": dbg.get("crossencoder_score"), "matched": dbg.get("matched_query")}
 
 
 def pct(xs, p):
@@ -96,14 +101,50 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--out", default="results.json")
+    ap.add_argument("--label", default="", help="Short run label (e.g. 'Run 3')")
+    ap.add_argument("--note", default="", help="Free-text note about settings/environment")
     a = ap.parse_args()
     res = {"A_warm": [], "B_paraphrase": [], "C_trap": [], "D_repeat": []}
     with httpx.Client() as c:
-        for canon, _, _ in INTENTS: res["A_warm"].append(ask(c, a.url, canon))
+        # Capture backend config at start so the results file records exact settings used.
+        try:
+            cfg_resp = c.get(f"{a.url}/config", timeout=10)
+            backend_config = cfg_resp.json() if cfg_resp.is_success else {"error": f"HTTP {cfg_resp.status_code}"}
+        except Exception as exc:
+            backend_config = {"error": str(exc)}
+
+        print(f"Connecting to {a.url}...")
+        print("Starting Phase A (warm canonical queries)...")
+        for i, (canon, _, _) in enumerate(INTENTS, 1):
+            print(f"  [A {i}/{len(INTENTS)}] {canon[:40]}...", end=" ", flush=True)
+            res_item = ask(c, a.url, canon)
+            print("HIT" if res_item["cached"] else "MISS")
+            res["A_warm"].append(res_item)
+
+        print("\nStarting Phase B (paraphrase queries)...")
+        total_paras = sum(len(p) for _, p, _ in INTENTS)
+        idx = 1
         for _, paras, _ in INTENTS:
-            for p in paras: res["B_paraphrase"].append(ask(c, a.url, p))
-        for _, _, trap in INTENTS: res["C_trap"].append(ask(c, a.url, trap))
-        for canon, _, _ in INTENTS: res["D_repeat"].append(ask(c, a.url, canon))
+            for p in paras:
+                print(f"  [B {idx}/{total_paras}] {p[:40]}...", end=" ", flush=True)
+                res_item = ask(c, a.url, p)
+                print("HIT" if res_item["cached"] else "MISS")
+                res["B_paraphrase"].append(res_item)
+                idx += 1
+
+        print("\nStarting Phase C (adversarial trap queries)...")
+        for i, (_, _, trap) in enumerate(INTENTS, 1):
+            print(f"  [C {i}/{len(INTENTS)}] {trap[:40]}...", end=" ", flush=True)
+            res_item = ask(c, a.url, trap)
+            print("HIT (trap)" if res_item["cached"] else "MISS (rejected)")
+            res["C_trap"].append(res_item)
+
+        print("\nStarting Phase D (exact repeat queries)...")
+        for i, (canon, _, _) in enumerate(INTENTS, 1):
+            print(f"  [D {i}/{len(INTENTS)}] {canon[:40]}...", end=" ", flush=True)
+            res_item = ask(c, a.url, canon)
+            print("HIT" if res_item["cached"] else "MISS")
+            res["D_repeat"].append(res_item)
 
     A, B, C, D = (res[k] for k in ("A_warm", "B_paraphrase", "C_trap", "D_repeat"))
     total = sum(len(v) for v in res.values())
@@ -112,6 +153,11 @@ def main():
     trap_hits = [r for r in C if r["cached"]]
     exact = [r for r in D if r["cached"]]
     summary = {
+        "label": a.label,
+        "note": a.note,
+        "url": a.url,
+        "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
+        "backend_config": backend_config,
         "machine": platform.platform(), "processor": platform.processor(),
         "total_requests": total,
         "paraphrases": len(B), "paraphrase_hit_rate_pct": round(100 * para_hits / len(B), 1),

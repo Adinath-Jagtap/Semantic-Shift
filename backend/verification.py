@@ -1,5 +1,5 @@
 """
-Three-layer verification pipeline for semantic cache hit/miss decisions.
+Four-layer verification pipeline for semantic cache hit/miss decisions.
 
 Pipeline:
   0. Exact-match short-circuit — instant return, no ML.
@@ -124,7 +124,7 @@ def _char_similarity(a: str, b: str) -> float:
 
 
 # Threshold for character-level fuzzy matching (catches typos).
-_CHAR_SIMILARITY_THRESHOLD = 0.95
+# Read from settings so it can be overridden via CACHE_CHAR_SIMILARITY_THRESHOLD.
 
 
 # Pre-computed normalized lookup for O(1) exact-match checks.
@@ -300,7 +300,7 @@ def decide_cache_hit(
         fuzzy_ratio = 0.0
         for entry in entries:
             ratio = _char_similarity(query, entry.query_text)
-            if ratio > _CHAR_SIMILARITY_THRESHOLD and ratio > fuzzy_ratio:
+            if ratio > settings.char_similarity_threshold and ratio > fuzzy_ratio:
                 fuzzy_match = entry
                 fuzzy_ratio = ratio
 
