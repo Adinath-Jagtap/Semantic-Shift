@@ -747,7 +747,7 @@
       kpiCard("Hits", s.cache_hits ?? 0),
       kpiCard("Misses", s.cache_misses ?? 0),
       kpiCard("Hit Rate", `${((s.hit_rate ?? 0) * 100).toFixed(1)}%`),
-      kpiCard("$ Saved", `$${Number(s.estimated_dollars_saved ?? 0).toFixed(2)}`),
+      kpiCard("$ Saved (est.)", `$${Number(s.estimated_dollars_saved ?? 0).toFixed(2)}`),
       kpiCard("Time Saved", `${Number(s.estimated_time_saved_ms ?? 0).toFixed(0)}ms`)
     ].join("");
   }

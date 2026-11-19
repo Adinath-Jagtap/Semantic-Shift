@@ -1,6 +1,6 @@
 # Technical Decisions — Library Choices, Algorithm Rationale & Design Notes
 
-This document explains **why** each technical decision was made — the libraries chosen, the algorithms used, the threshold values, and the trade-offs accepted.
+This document details the architectural decisions, algorithm designs, threshold selections, and trade-offs behind the **Semantic-Shift** semantic caching pipeline.
 
 ---
 
@@ -9,16 +9,17 @@ This document explains **why** each technical decision was made — the librarie
 1. [Why These Libraries](#1-why-these-libraries)
 2. [Why SQLite Over Alternatives](#2-why-sqlite-over-alternatives)
 3. [Why all-MiniLM-L6-v2 for Embeddings](#3-why-all-minilm-l6-v2-for-embeddings)
-4. [Why Vectorized Cosine as Layer 1](#4-why-vectorized-cosine-as-layer-1)
+4. [Why Vectorized Cosine as Layer 1 (and BM25 as Layer 2)](#4-why-vectorized-cosine-as-layer-1-and-bm25-as-layer-2)
 5. [Why a Cross-Encoder as the Final Gate](#5-why-a-cross-encoder-as-the-final-gate)
 6. [Why Four Layers Instead of One](#6-why-four-layers-instead-of-one)
-7. [How Default Thresholds Were Chosen](#7-how-default-thresholds-were-chosen)
-8. [Why In-Memory List + SQLite Persistence](#8-why-in-memory-list--sqlite-persistence)
+7. [How Default Thresholds Were Chosen & Calibrated](#7-how-default-thresholds-were-chosen--calibrated)
+8. [Why In-Memory Hot Path + SQLite Persistence](#8-why-in-memory-hot-path--sqlite-persistence)
 9. [Security Decisions](#9-security-decisions)
 10. [Why Groq as the LLM Backend](#10-why-groq-as-the-llm-backend)
-11. [Why a Native HTML/JS Dashboard](#11-why-a-native-htmljs-dashboard)
+11. [Frontend & Dashboard Architecture](#11-frontend--dashboard-architecture)
 12. [What Was Deliberately Not Used](#12-what-was-deliberately-not-used)
-13. [Scalability Roadmap](#13-scalability-roadmap)
+13. [Test Architecture & Empirical Validation](#13-test-architecture--empirical-validation)
+14. [Scalability Roadmap](#14-scalability-roadmap)
 
 ---
 
@@ -26,296 +27,284 @@ This document explains **why** each technical decision was made — the librarie
 
 | Library | Version | Purpose | Why This One |
 |---|---|---|---|
-| **FastAPI** | 0.115.6 | HTTP API framework | Async-native, automatic OpenAPI docs, Pydantic-integrated. The industry standard for Python ML APIs. |
-| **uvicorn** | 0.34.0 | ASGI server | The canonical server for FastAPI. The `[standard]` extra adds `uvloop` and `httptools` for better performance. |
-| **sentence-transformers** | 3.3.1 | Embeddings + cross-encoder | Single library provides both the bi-encoder (embeddings) and cross-encoder (re-ranking). Hugging Face ecosystem, well-maintained, battle-tested. |
-| **rank-bm25** | 0.2.2 | BM25 keyword scoring | Minimal, pure-Python BM25Okapi implementation. No heavy dependencies. Does exactly one thing well. |
-| **numpy** | >=1.24.0 | Vectorized math | Sub-microsecond cosine similarity via `np.dot()` on L2-normalized embeddings. Also stores embeddings as `float32` arrays in memory. |
-| **groq** | 0.15.0 | LLM API client | Official Groq SDK with typed responses, retry logic, and proper error classes. Safer than raw `requests`. |
-| **python-dotenv** | 1.0.1 | `.env` file loading | Standard, lightweight, universally understood. |
-| **pydantic** | 2.10.4 | Input validation | Already a FastAPI dependency — used for request/response models with constrained types. |
-| **pytest** | 8.3.4 | Testing | The standard Python test framework. Supports fixtures, parametrization, and clear assertion output. |
-| **httpx** | 0.28.1 | Test client | FastAPI's recommended test client via `TestClient`. Async-compatible. |
+| **FastAPI** | 0.115.6 | HTTP API framework | Async-native, automatic OpenAPI documentation, Pydantic integration. Industry standard for Python ML services. |
+| **uvicorn** | 0.34.0 | ASGI server | Canonical ASGI server for FastAPI. Includes `uvloop` and `httptools` on supported platforms for high throughput. |
+| **sentence-transformers** | 3.3.1 | Embeddings + cross-encoder | Unified library providing bi-encoders (`SentenceTransformer`) and cross-encoders (`CrossEncoder`). Well-maintained and Hugging Face integrated. |
+| **rank-bm25** | 0.2.2 | BM25 keyword scoring | Lightweight, pure-Python `BM25Okapi` implementation. Self-contained with no heavy native dependencies. |
+| **numpy** | >=1.24.0 | Vectorized math | Hardware-accelerated dot products via BLAS. Computes cosine similarities across all entries in `< 0.01ms` and stores in-memory embeddings as `float32` arrays. |
+| **groq** | 0.15.0 | LLM API client | Official Groq SDK with typed responses, retry policies, and structured exception handling. |
+| **python-dotenv** | 1.0.1 | `.env` configuration | Standard and zero-overhead environment file loader. |
+| **pydantic** | 2.10.4 | Input validation | Request and response schema enforcement with type constraints (`min_length`, bounds checks). |
+| **pytest** | 8.3.4 | Test framework | Standard Python test runner supporting parameterization, fixtures, and detailed failure diffs. |
+| **httpx** | 0.28.1 | HTTP test client | Asynchronous-capable HTTP client used by FastAPI's `TestClient` and the benchmark suite. |
 
-### Why exact version pins?
+### Version Pinning Rationale
 
-Floating versions (`>=`) can introduce breaking changes between installs. Pinning to exact versions ensures:
-- Reproducible builds across machines
-- No surprise breakage from upstream updates
-- Known-good dependency graph
+All project dependencies are explicitly pinned in `requirements.txt` to guarantee:
+- Deterministic and reproducible environments across developer setups and CI.
+- Immunity against breaking upstream API updates.
+- Predictable inference and numerical consistency in model outputs.
 
 ---
 
 ## 2. Why SQLite Over Alternatives
 
-| Alternative | Why Not |
+| Alternative | Trade-offs & Limitations |
 |---|---|
-| **JSON file** | Rewrites the entire file on every add. A crash mid-write corrupts the whole cache. SQLite writes one row at a time with ACID guarantees. |
-| **Redis** | External server dependency. Overkill at hackathon scale (hundreds of entries). Adds operational complexity. |
-| **PostgreSQL** | Same as Redis — external server, connection management, migrations. Way beyond what's needed. |
-| **FAISS / Qdrant** | Vector databases are for millions of vectors with approximate nearest neighbor search. At hundreds of entries, a Python `for` loop is just as fast and far simpler. |
+| **JSON file** | Rewrites the entire file on every update. A process interruption or crash mid-write risks cache corruption. |
+| **Redis** | Requires a standalone daemon/service. Adds deployment and operational complexity unnecessary for small to mid-scale cache sizes. |
+| **PostgreSQL** | Substantial operational overhead (containerization, credential management, connection pooling, migrations). |
+| **Vector DBs (FAISS, Qdrant)** | Geared toward millions of high-dimensional vectors with approximate nearest neighbors. For thousands of entries, brute-force matrix multiplication in NumPy is faster, exact, and drastically simpler. |
 
-### Why SQLite specifically:
+### Why SQLite Specifically
 
-- **Zero dependencies** — it's in Python's standard library (`sqlite3`).
-- **ACID transactions** — a crash can't corrupt the cache.
-- **Single-file storage** — portable, easy to inspect, easy to delete and restart.
-- **WAL mode** — enables concurrent reads while writing, which helps with the async server.
+- **Zero configuration**: Bundled in Python's standard library (`sqlite3`).
+- **ACID guarantees**: Atomic transactions prevent corruption during concurrent writes or sudden terminations.
+- **Single-file portability**: Easily inspected, backed up, or purged (`cache_store.db`).
+- **WAL mode**: Write-Ahead Logging allows concurrent readers while writes execute.
 
 ---
 
 ## 3. Why `all-MiniLM-L6-v2` for Embeddings
 
-| Property | Value |
+| Metric | Specification |
 |---|---|
-| Dimensions | 384 |
-| Parameters | 22.7M |
-| Max sequence length | 256 tokens |
-| Speed | ~14,000 sentences/sec on CPU |
-| Quality (STS benchmark) | 0.8489 |
+| Embedding Dimensions | 384 |
+| Model Parameters | 22.7M |
+| Max Sequence Length | 256 tokens |
+| Inference Throughput | ~14,000 sentences/sec on CPU |
+| Quality (STS Benchmark) | 0.8489 |
 
-### Why this model:
+### Selection Rationale
 
-1. **Speed/accuracy sweet spot**: 384 dimensions is enough for semantic matching without the memory/compute cost of 768 or 1024-dim models.
-2. **CPU-friendly**: 22M parameters means it loads fast and runs fast on a laptop without a GPU.
-3. **Well-benchmarked**: Consistently top-tier on the MTEB leaderboard for its size class.
-4. **Sentence-level**: Designed for comparing whole sentences (not paragraphs or documents), which is exactly our use case — short user queries.
-
-### What was considered and rejected:
-
-| Model | Why Not |
-|---|---|
-| `all-mpnet-base-v2` | Better quality but 2.5x slower (110M params). Overkill for demo-scale. |
-| `text-embedding-3-small` (OpenAI) | External API call for embeddings would add latency to every request, defeating the purpose of caching. |
-| `e5-small-v2` | Comparable quality but less ecosystem support and fewer benchmarks. |
+1. **Efficiency Sweet Spot**: 384-dimensional vectors capture fine-grained semantic intent without the compute or memory footprint of 768 or 1024-dimensional architectures.
+2. **CPU-Optimized**: At 22.7M parameters, initialization takes seconds and CPU inference takes ~13ms, fitting local desktop deployment without requiring dedicated GPUs.
+3. **Sentence-Level Tuning**: Pre-trained specifically on sentence pairs, making it directly suited for short conversational prompts and search queries.
 
 ---
 
 ## 4. Why Vectorized Cosine as Layer 1 (and BM25 as Layer 2)
 
-### The old way (BM25 first):
-Originally, BM25 was used to pre-filter candidates because string matching was assumed to be faster than neural network comparisons. But BM25 is actually quite noisy and misses paraphrases that use different words ("reset" vs "recover").
+### Shift from BM25-First to Vectorized Cosine
 
-### The new way (Cosine first):
-Because the embeddings are L2-normalized (`all-MiniLM-L6-v2`), cosine similarity reduces to a single dot product. By pre-stacking all cached embeddings into a single numpy matrix (`np.vstack`), we can compute the similarity against ALL cached queries in a **single C-optimized BLAS operation**.
-- Vectorized numpy dot product takes **< 0.01ms** for hundreds of entries.
-- It is actually faster than BM25 tokenization and scoring.
-- It is far more accurate than BM25 for finding semantic matches.
+Originally, BM25 was positioned as an initial filter under the assumption that token matching is inherently faster than neural embeddings. However:
+- BM25 is lexical: It rejects legitimate paraphrases that express identical intent using alternative vocabulary (e.g., *"How do I reset my password?"* vs *"What are the steps to recover my password?"*).
+- When embeddings are L2-normalized upon generation (`normalize_embeddings=True`), cosine similarity simplifies to a dot product:
 
-### What BM25 does now (Sanity Check):
-BM25 (Best Matching 25) is now used as a **sanity check** (Layer 2) only for borderline cosine scores (0.72 - 0.88). If the cosine similarity is unsure, we check if the words overlap. It adds evidence to the debug trace before the expensive cross-encoder step.
+$$\text{Cosine Similarity}(\vec{a}, \vec{b}) = \vec{a} \cdot \vec{b}$$
+
+By pre-stacking cached embeddings into a NumPy matrix (`_embedding_matrix`), a single matrix-vector multiplication computes similarity against every cached entry in **< 0.01ms**:
+
+$$\text{similarities} = \mathbf{M} \cdot \vec{q}$$
+
+This BLAS operation is faster and more discriminative than lexical tokenization.
+
+### The Role of BM25 (Layer 2 Sanity Check)
+
+BM25 was repositioned to Layer 2 as an **informational sanity check** for borderline cases (cosine score between 0.72 and 0.88). It evaluates keyword overlap and attaches lexical evidence (`bm25_score`, `bm25_confirms`) to the response debug trace before dispatching the query to the cross-encoder.
 
 ---
 
 ## 5. Why a Cross-Encoder as the Final Gate
 
-### The bi-encoder limitation:
+### Bi-Encoder Limitations
 
-Bi-encoders (like `all-MiniLM-L6-v2`) encode each sentence **independently** and then compare their embeddings via cosine similarity. This is fast but has a known weakness:
+Bi-encoders (such as `all-MiniLM-L6-v2`) encode queries and candidates **independently**. While this allows pre-computing and caching embeddings, it exhibits a known vulnerability: queries sharing domain vocabulary or grammatical structure can yield misleadingly high cosine similarities despite conveying opposing intent.
 
-> Sentences that share structure and topic but differ in **intent** can have high cosine similarity.
+For example:
+- *"How do I reset my password?"* vs *"How do I delete my account?"* (shares 4 of 6 words, yielding high cosine similarity).
+- *"What is machine learning?"* vs *"What is the history of machine learning?"* (yields a cosine similarity of ~0.745).
 
-Example:
-- "How do I reset my password?" → embedding A
-- "How do I delete my account?" → embedding B
-- `cosine_sim(A, B)` ≈ 0.75-0.85 — **dangerously close to the threshold**
+### The Cross-Encoder Solution
 
-### Why the cross-encoder fixes this:
+A cross-encoder processes both sentences simultaneously in a single transformer pass with full cross-attention across all tokens:
 
-A cross-encoder takes **both sentences as input simultaneously** through a single transformer pass. It sees the relationship between the words directly:
+$$\text{Input: } [\text{CLS}] \; \text{Query} \; [\text{SEP}] \; \text{Candidate} \; [\text{SEP}]$$
 
-```
-Input: [CLS] How do I reset my password? [SEP] How do I delete my account? [SEP]
-Output: 0.12 (low — these are different requests)
-```
+This enables the model to resolve semantic dependencies and determine true intent equivalence.
 
-vs.
+### Why `quora-distilroberta-base`
 
-```
-Input: [CLS] How do I reset my password? [SEP] What are the steps to recover my password? [SEP]
-Output: 8.7 (high — these are paraphrases)
-```
-
-The cross-encoder is ~10x slower than a bi-encoder comparison, but it only runs **once** — on the single best candidate from Layer 2. This is the layer that catches the "reset password" vs "delete account" trap.
-
-### Why `quora-distilroberta-base`:
-
-- **Trained on Quora Question Pairs** — a dataset of 400K question pairs labeled as duplicate or not. This is exactly our use case: "Are these two questions asking the same thing?"
-- Outputs a **probability [0, 1]** where > 0.5 means "duplicate question".
-- Correctly distinguishes **same intent** from **same topic** — e.g., "roadmap for AI engineer" vs "what is AI engineer" share the topic (AI) but have different intents (roadmap ≠ definition).
-
-### What was considered and rejected:
-
-| Model | Why Not |
-|---|---|
-| `ms-marco-MiniLM-L-6-v2` | Trained for passage retrieval (query → document). Returns nonsensical negative scores (-5.88) when given two short questions. Wrong task entirely. |
-| `stsb-distilroberta-base` | Trained on Semantic Textual Similarity. Measures **topic overlap**, not **intent equivalence**. Scored "roadmap for AI" vs "what is AI" at 0.514 — barely above threshold — because they share the topic. |
+- **Trained on Quora Question Pairs**: 400,000 human-labeled question pairs annotated for semantic duplication ("Are these asking the same question?").
+- **Classification Output**: Produces calibrated probabilities in $[0, 1]$.
+- **Contrastive Precision**: Successfully distinguishes *same topic* from *same intent* (e.g., rejecting *"history of ML"* vs *"what is ML"*).
+- **Avoided Model (`ms-marco-MiniLM-L-6-v2`)**: MS-MARCO models are trained on passage retrieval (query $\to$ document) and return uncalibrated, negative scores (e.g., -5.88) when given two short questions.
 
 ---
 
 ## 6. Why Four Layers Instead of One
 
-A single layer would be either too fast-and-inaccurate or too slow-and-accurate:
+A single algorithm cannot achieve sub-millisecond repeat latency while preventing semantic drift. Semantic-Shift uses a hierarchical 4-layer cascade:
 
-| Approach | Speed | Accuracy | Problem |
+```
+User Query
+    │
+    ▼
+┌────────────────────────────────────────────────────────┐
+│ Layer 0: Exact-Match & Fuzzy Typo Match                │
+│   • Exact match: O(1) normalized string lookup (< 1ms) │
+│   • Typo fallback: SequenceMatcher (cutoff 0.95)       │
+└──────────────────────────┬─────────────────────────────┘
+                           │ (no exact match)
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ Layer 1: Vectorized Cosine Similarity                  │
+│   • all-MiniLM-L6-v2 embeddings (threshold: 0.72)      │
+│   • Matrix multiply across all cached entries (~13ms)  │
+│   • Cosine >= 0.88 -> HIGH CONFIDENCE HIT (skip CE)    │
+│   • Cosine < 0.72  -> Trigger typo check, then MISS    │
+└──────────────────────────┬─────────────────────────────┘
+                           │ (borderline: 0.72 <= sim < 0.88)
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ Layer 2: BM25 Sanity Check                             │
+│   • Computes lexical overlap evidence for debug trace  │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ Layer 3: Cross-Encoder Re-ranking                      │
+│   • quora-distilroberta-base (cutoff: 0.75)            │
+│   • Final intent verification on best candidate (~30ms)│
+└────────────────────────────────────────────────────────┘
+```
+
+### Layer Latency & Responsibilities
+
+1. **Layer 0 (Exact & Typo Match)**:
+   - *Exact repeat*: Normalized string lookup (`_normalized_lookup`) executes in **0.02–0.05ms**, bypassing ML entirely.
+   - *Typo path*: If cosine similarity falls below threshold, `_char_similarity()` tests character-level overlap against cached entries. At threshold `0.95`, it resolves minor typos (`pythn` $\to$ `python`) in **~15ms** without false hits.
+2. **Layer 1 (Vectorized Cosine Similarity)**: Computes semantic proximity in **~13ms** (including query embedding). Matches with cosine $\ge 0.88$ are accepted immediately.
+3. **Layer 2 (BM25 Sanity Check)**: Scores keyword overlap in **~1–5ms**, populating debug telemetry.
+4. **Layer 3 (Cross-Encoder Re-ranking)**: Evaluates the single top candidate in **~30ms** for borderline cases, catching adversarial traps.
+
+---
+
+## 7. How Default Thresholds Were Chosen & Calibrated
+
+Initial benchmark runs (Run 1) demonstrated high paraphrase recall but exposed vulnerabilities to semantic traps (46.7% false positive rate). An offline grid sweep (`tests/calibrate.py`) on 90 requests calibrated the pipeline to zero false positives:
+
+| Parameter | Baseline (Run 1) | Calibrated (Run 2) | Rationale & Empirical Impact |
 |---|---|---|---|
-| BM25 only | ⚡⚡⚡ | ❌ | Misses paraphrases, false positives on keyword overlap |
-| Cosine only | ⚡⚡ | ⚠️ | "Reset password" vs "delete account" has dangerously similar embeddings |
-| Cross-encoder only | ⚡ | ✅ | O(n) cross-encoder calls per request — too slow with 100+ cache entries |
+| `CACHE_SIMILARITY_THRESHOLD` | `0.72` | `0.72` | Maximizes candidate recall into Layer 3. Paraphrase pairs cluster in the 0.75–0.95 range. |
+| `_BORDERLINE_UPPER` | `0.88` | `0.88` | When cosine $\ge 0.88$, matches are unambiguous. None of the 15 benchmark traps scored this high, saving ~30ms by skipping Layer 3. |
+| `_CHAR_SIMILARITY_THRESHOLD` | `0.85` | `0.95` | At 0.85, 3 traps falsely matched on character overlap (*"linear search"* vs *"binary search"* at 93.1%, *"upgrade"* vs *"cancel"* at 85.7%, *"squash"* vs *"undo"* at 86.6%). Raising to 0.95 blocked all traps while retaining typos (`pythn` $\to$ `python`). |
+| `CACHE_CROSSENCODER_MIN_SCORE` | `0.25` | `0.75` | At 0.25, 4 contrastive traps passed Layer 3. The highest-scoring trap was *"history of ML"* vs *"what is ML"* (0.733). Setting threshold to 0.75 eliminated 100% of trap false positives (0/15 in Run 2). |
+| `CACHE_BM25_MIN_OVERLAP` | `0.3` | `0.3` | Permissive lexical baseline used for diagnostic validation rather than hard rejection. |
 
-The four-layer pipeline gives us:
+### Calibration Grid Summary (`tests/calibrate.py`)
 
-```
-Layer 0 (Exact/Typo):    O(n) string comparison & char overlap — instant return, zero ML
-Layer 1 (Cosine):        O(1) matrix multiply — picks the best candidate instantly
-Layer 2 (BM25):          Sanity check for borderline candidates
-Layer 3 (Cross-encoder): O(1) — one call on the single best candidate
-```
+| Cosine Threshold | Cross-Encoder Cutoff | Paraphrase Hit Rate | Trap False Positives |
+|---|---|---|---|
+| **>= 0.72** | **>= 0.75** | **68.9%** | **0 / 15** |
+| >= 0.72 | >= 0.80 | 68.9% | 0 / 15 |
+| >= 0.74 | >= 0.75 | 66.7% | 0 / 15 |
+| >= 0.76 | >= 0.25 | 66.7% | 0 / 15 |
+| >= 0.78 | >= 0.25 | 66.7% | 0 / 15 |
 
-**Total: Vectorized numpy operations + fallback ML = fast AND accurate.**
-
-Layer 0 (exact/typo match) acts as a zero-cost optimization — if the user sends the exact same query text, or a minor typo variant (e.g. `pythn`), no ML models are invoked at all. This brings repeat-query latency from ~40ms to < 1ms.
-
----
-
-## 7. How Default Thresholds Were Chosen
-
-### `CACHE_SIMILARITY_THRESHOLD = 0.72`
-
-- Cosine similarity of L2-normalized `all-MiniLM-L6-v2` embeddings on paraphrase pairs typically falls in the **0.75–0.95** range.
-- Non-paraphrase but topic-related pairs fall in the **0.60–0.72** range.
-- 0.72 lets more candidates through to Layer 3 (the cross-encoder), where intent is verified accurately. It also leaves room for typo matching to take over if below 0.72.
-- The dashboard settings panel lets you tune this live.
-
-### `CACHE_BM25_MIN_OVERLAP = 0.3`
-
-- Normalized BM25 scores are in [0, 1] after dividing by the max score.
-- 0.3 is intentionally permissive — BM25 is just a pre-filter, not a decision-maker.
-- The top-3 fallback ensures even entries below 0.3 can reach Layer 2.
-
-### `CACHE_CROSSENCODER_MIN_SCORE = 0.25`
-
-- The `quora-distilroberta-base` cross-encoder outputs probabilities in [0, 1].
-- While > 0.5 usually means "duplicate question", abbreviations (like "ML" vs "machine learning") can artificially lower the score to the 0.3-0.5 range.
-- A threshold of 0.25 correctly accepts valid paraphrases while still firmly rejecting truly different intents (which score < 0.1).
-
-### Cross-Encoder Skip Threshold = 0.88
-
-- When cosine similarity >= 0.88, the match is near-identical — the cross-encoder is skipped to save ~200ms.
-- Below 0.88, the cross-encoder confirms intent equivalence.
-- This prevents false positives like "roadmap for AI" vs "what is AI" from being accepted without cross-encoder verification.
+Calibrating to `ce >= 0.75` selected the configuration yielding **zero false positives** with maximum paraphrase recall (68.9%). In production caching, a miss costs one LLM call, whereas a false hit returns incorrect data.
 
 ---
 
-## 8. Why In-Memory List + SQLite Persistence
+## 8. Why In-Memory Hot Path + SQLite Persistence
 
-### The hybrid design:
+The architecture separates read paths from storage:
 
 ```
-Hot path (per-request):     In-memory Python list — zero I/O
-Cold path (startup + add):  SQLite reads/writes — durable
+Request Hot Path:   In-Memory Dicts & Arrays (0ms I/O)
+                     ├── _embedding_cache (query_text -> vector)
+                     ├── _normalized_lookup (exact match)
+                     ├── _embedding_matrix (vectorized cosine)
+                     └── _crossencoder_cache (pair -> score)
+                           │
+Durable Cold Path:   SQLite (cache_store.db)
+                     ├── Read once on server startup
+                     └── Write atomically on cache miss (add)
 ```
 
-### Why not just SQLite for everything?
-
-At hackathon scale (hundreds of entries), reading from SQLite per-request would be fine in terms of speed. But:
-- The verification pipeline needs random access to all embeddings (for cosine similarity) — easier with a Python list than SQLite cursors.
-- BM25Okapi is built from a corpus array — it expects a Python list of token lists.
-- The in-memory list is the natural data structure for this workload.
-
-### Why not just an in-memory list (no SQLite)?
-
-Without persistence, restarting the server loses all cached entries. SQLite gives crash-safe persistence with zero operational overhead.
+- **Zero I/O on Reads**: Vector comparisons and lookups operate entirely in RAM.
+- **ACID Persistence on Writes**: When a new answer is generated, it is written to SQLite, maintaining persistence across server restarts.
 
 ---
 
 ## 9. Security Decisions
 
-| Decision | Rationale |
-|---|---|
-| **Parameterized SQL only** | SQL injection is the #1 web vulnerability (OWASP). All queries use `?` placeholders — no string formatting ever touches SQL. |
-| **GROQ_API_KEY never logged** | `config.py` reads the key but never prints it. `main.py` logs the model name and thresholds, never the key. API responses never include the key. |
-| **Pydantic request validation** | Every endpoint uses typed Pydantic models with constraints (`min_length`, `ge`, `le`). Malformed requests are rejected before reaching business logic. |
-| **CORS open (intentional)** | The dashboard is served from the same FastAPI origin, so CORS is set to `*` to allow the browser's same-origin fetch calls and any external tooling (Postman, curl). |
-| **No eval/pickle/exec** | Embeddings are serialized via `json.dumps`/`json.loads` — safe, deterministic, no code execution. |
-| **Error bodies don't leak internals** | Groq errors are wrapped in `GroqAPIError` with a sanitized body. Stack traces are logged server-side, not returned to the client. |
-| **Fail-fast on missing config** | `sys.exit(1)` with a clear message if `GROQ_API_KEY` is missing — never silently run with an empty key. |
-| **DOMPurify on rendered markdown** | The dashboard uses `DOMPurify.sanitize()` before injecting any LLM response HTML into the DOM, preventing XSS from malicious model output. |
+| Decision | Implementation | Threat Mitigated |
+|---|---|---|
+| **Parameterized Queries** | `cursor.execute("SELECT ... WHERE query_text = ?", (q,))` | SQL Injection (OWASP Top 10). No dynamic string concatenation in SQL. |
+| **Credential Redaction** | `GROQ_API_KEY` loaded into memory; excluded from `/stats`, logs, and API outputs. | Secret leakage in telemetry and monitoring traces. |
+| **Pydantic Validation** | Enforced models with type constraints on all request inputs. | Malformed payloads, buffer overflow attempts, and unvalidated parameters. |
+| **Fail-Fast Configuration** | Process exits (`sys.exit(1)`) immediately if `GROQ_API_KEY` is missing. | Prevents silent runtime failure modes. |
+| **Deterministic Serialization** | Embeddings serialized via standard JSON (`json.dumps`/`loads`). | Eliminates arbitrary code execution vulnerabilities associated with `pickle`. |
+| **Sanitized Frontend Rendering** | Client uses `DOMPurify.sanitize(marked.parse(content))` | Prevents Cross-Site Scripting (XSS) from malicious or hallucinated LLM markdown. |
 
 ---
 
 ## 10. Why Groq as the LLM Backend
 
-Groq provides:
-- **Ultra-low latency** (~200ms for short responses) via custom LPU hardware.
-- **OpenAI-compatible API shape** — easy to swap for other providers later.
-- **Free tier** with generous rate limits for hackathon use.
-- **Official Python SDK** with typed responses and built-in retry logic.
-
-The `GROQ_MODEL` is configurable via env var — defaulting to `llama-3.1-8b-instant` (fast, capable for general Q&A).
+- **Latency Optimization**: Groq's Language Processing Units (LPUs) provide near-instant inference for generative tasks.
+- **Configurable Models**: Defaults to `openai/gpt-oss-20b` (used in benchmarks) with pluggable support for `llama-3.1-8b-instant`.
+- **OpenAI-Compatible Spec**: Endpoints follow standard completion formats, enabling drop-in substitution with alternative providers.
 
 ---
 
-## 11. Why a Native HTML/JS Dashboard
+## 11. Frontend & Dashboard Architecture
 
-The dashboard was originally built with Streamlit but was replaced with a custom HTML/CSS/JS single-page app for the following reasons:
+The project provides two complementary dashboard interfaces:
 
-| Requirement | Streamlit | Native HTML/JS |
-|---|---|---|
-| Chat-style UI with bubbles | ❌ Not possible | ✅ Full DOM control |
-| Smooth animations & micro-interactions | ❌ Limited | ✅ Pure CSS/keyframes |
-| Custom HIT/MISS chips inline with responses | ❌ Requires hacks | ✅ Trivial |
-| Animated typing indicator | ❌ No native support | ✅ CSS animation |
-| Served from same port as API | ❌ Requires separate process | ✅ `GET /` route in FastAPI |
-| No separate process to manage | ❌ `streamlit run` needed | ✅ Single `uvicorn` command |
-| Mobile-responsive layout | ❌ Limited | ✅ Full CSS media queries |
+### Option A: Built-in Single-Page Dashboard (`frontend/index.html`)
+- **Single Process**: Directly served by FastAPI at `GET /` (`uvicorn backend.main:app` or `python app.py`).
+- **Zero Frontend Build Pipeline**: Vanilla HTML5, modern CSS, and vanilla JavaScript without npm, webpack, or external build steps.
+- **Interactive Telemetry**: Includes real-time KPI metrics, query test bench, verification layer inspector, and live threshold tuning sliders (`/config`).
 
-### Why no framework (React/Vue)?
-
-The dashboard is a single HTML file with embedded CSS and JS. It has:
-- No build step
-- No `node_modules`
-- No transpilation
-- No bundler
-
-This is intentional — a frontend build pipeline would add operational complexity for zero end-user benefit at hackathon scale.
-
-### Why `marked.js` + `DOMPurify` from CDN?
-
-- **marked.js** renders LLM responses as formatted markdown (code blocks, lists, etc.) — essential for readable answers.
-- **DOMPurify** sanitizes the rendered HTML before injecting it into the DOM — prevents XSS from adversarial model output.
-- Both loaded from CDN — no npm, no build step.
+### Option B: Streamlit Dashboard (`dashboard/app.py`)
+- Provides an alternative visual analytics interface for exploratory query inspection and benchmarking.
 
 ---
 
 ## 12. What Was Deliberately Not Used
 
-| Technology | Why Excluded |
+| Technology | Reason for Omission |
 |---|---|
-| **FAISS** | Approximate nearest neighbor search. At hundreds of entries, brute-force cosine is just as fast and simpler. FAISS adds a C extension dependency and index management complexity. |
-| **Qdrant / Pinecone / Weaviate** | Vector databases for million-scale datasets. Massive operational overhead for zero benefit at this scale. |
-| **Redis** | In-memory cache server. We already have an in-memory Python list — Redis would add a network hop and a separate process for no gain. |
-| **LangChain** | Framework for LLM application orchestration. This project has exactly one LLM call and one cache check — LangChain would add layers of abstraction over a 10-line function. |
-| **Elasticsearch** | Full-text search engine. BM25Okapi in a 200-line Python library does the same thing at this scale without running a JVM. |
-| **scipy** | Would be used for `cosine_similarity()`, but importing scipy for a single dot-product/magnitude calculation adds a 150MB dependency. A 4-line manual implementation is equivalent. |
-| **numpy** | `sentence-transformers` already uses it internally. We call `.tolist()` to convert to plain Python lists for JSON serialization, but we don't import numpy directly — keeping the dependency surface minimal. |
-| **Streamlit** | Originally used for the dashboard. Replaced with a native HTML/CSS/JS SPA because Streamlit cannot produce a chat-style UI, smooth animations, or inline HIT/MISS chips. See section 11. |
-| **React / Vue / Angular** | Frontend frameworks require a build step, Node.js, and a separate dev server. The dashboard's requirements are met with a single self-contained HTML file. |
+| **FAISS / Qdrant / Pinecone** | Vector databases add network hops and indexing overhead. At thousands of cached vectors, vectorized NumPy matrix multiplication (`matrix @ vector`) executes in `< 0.01ms` with zero dependencies. |
+| **Redis** | The in-memory Python structures provide sub-millisecond retrieval in-process. Adding Redis would introduce an external daemon and inter-process network overhead. |
+| **LangChain / LlamaIndex** | This application implements a focused, 4-layer proxy pipeline. Heavy agentic frameworks introduce unnecessary abstraction layers and dependency bloat. |
+| **Elasticsearch** | BM25Okapi in a lightweight pure-Python module fulfills lexical sanity checks without requiring a JVM or external search cluster. |
+| **SciPy** | Would add a ~150MB dependency solely for `cosine_similarity`. NumPy's `np.dot` on L2-normalized vectors performs the identical calculation faster. |
+| **Heavy Frontend Frameworks (React/Vue)** | Single-file architecture prevents build tooling overhead while delivering a responsive, clean dashboard. |
 
 ---
 
-## 13. Scalability Roadmap
+## 13. Test Architecture & Empirical Validation
 
-What you'd change for production (beyond hackathon scale):
+The test suite validates semantic accuracy, performance, and threshold dynamics:
 
-| Current Design | Production Change | When Needed |
+### Unit Test Suite (`tests/test_verification.py`)
+
+1. **`test_empty_cache_returns_miss`**: Confirms that querying an empty database immediately returns a cache miss with `reason: empty_cache` without invoking neural models.
+2. **`test_paraphrase_returns_hit`**: Confirms that semantically identical questions (*"How do I reset my password?"* vs *"What are the steps to recover my password?"*) produce a cache hit.
+3. **`test_trap_pair_returns_miss`**: Core safety test verifying that adversarial pairs (*"How do I reset my password?"* vs *"How do I delete my account?"*) are rejected (`crossencoder_rejected` or `no_similarity_match`).
+4. **`test_threshold_sensitivity`**: Tests dynamic runtime threshold mutation, verifying that borderline queries reject under strict settings (0.99) and hit under relaxed settings (0.30).
+
+### Empirical Benchmark Suite (`tests/benchmark.py` & `tests/calibrate.py`)
+
+- **90-Request Evaluation**: Evaluates 15 canonical intents, 45 paraphrases, 15 adversarial traps, and 15 exact repeats.
+- **Telemetry Verification**: Records server-side latencies across all 4 pipeline paths:
+  - Exact repeats: **0.02–0.05 ms** (> 100,000x faster than LLM).
+  - Typo matches: **~15 ms** (~650x faster than LLM).
+  - High-confidence hits: **~13 ms** (~770x faster than LLM).
+  - Borderline full-pipeline hits: **~43 ms** (~230x faster than LLM).
+  - LLM cache misses: **~10,000 ms**.
+- **Zero-Trap Validation**: Confirmed 0.0% false-positive rate on calibrated settings (Run 2).
+
+---
+
+## 14. Scalability Roadmap
+
+| Current Design | Production Scale Target | Transition Strategy |
 |---|---|---|
-| In-memory Python list | FAISS index (IVF-PQ) or Qdrant | > 10,000 cache entries |
-| Single SQLite file | PostgreSQL with pgvector | Multi-instance deployment |
-| No cache eviction | TTL-based eviction + LRU | Cache > 1GB or stale answers |
-| Single-process stats | Redis counters or Prometheus | Horizontal scaling |
-| No streaming | SSE / WebSocket streaming | Production chat UIs |
-| Single user message | Full conversation hashing | Multi-turn applications |
-| `threading.Lock` | `asyncio.Lock` or per-request isolation | High concurrency (> 100 RPS) |
-| Manual cosine similarity | Batch matrix multiply (numpy) | > 1,000 candidates per request |
-| CDN-loaded JS libraries | Bundled + minified assets | Offline/air-gapped deployments |
+| In-memory NumPy matrix | > 50,000 entries | Implement FAISS IVF-PQ index or HNSW for sub-linear search. |
+| Single SQLite database | Multi-instance cluster | Migrate to PostgreSQL with `pgvector` or distributed vector DB. |
+| Indefinite persistence | Cache memory > 2GB | Implement TTL expiration with LRU (Least Recently Used) pruning. |
+| Single-process stats | Distributed fleet | Centralize telemetry via Redis counters or Prometheus/OpenTelemetry metrics. |
+| Whole response proxy | Real-time chat apps | Implement Server-Sent Events (SSE) streaming for cache hits and LLM responses. |

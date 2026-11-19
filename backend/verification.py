@@ -124,7 +124,7 @@ def _char_similarity(a: str, b: str) -> float:
 
 
 # Threshold for character-level fuzzy matching (catches typos).
-_CHAR_SIMILARITY_THRESHOLD = 0.85
+_CHAR_SIMILARITY_THRESHOLD = 0.95
 
 
 # Pre-computed normalized lookup for O(1) exact-match checks.

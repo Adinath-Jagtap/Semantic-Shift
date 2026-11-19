@@ -30,7 +30,7 @@ class _Settings:
             )
             sys.exit(1)
 
-        self.groq_model: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+        self.groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
         self.cache_persist_path: str = os.getenv("CACHE_PERSIST_PATH", "./cache_store.db")
 
         # --- Mutable thresholds (guarded by lock) ---
@@ -44,7 +44,10 @@ class _Settings:
             os.getenv("CACHE_CROSSENCODER_MIN_SCORE", "0.25")
         )
 
-        self.estimated_cost_per_call: float = 0.03
+        # NOTE: This is an estimate, not a measured value.
+        # Replace with your real per-call cost from the Groq console
+        # (Usage → Pricing) before quoting any dollar-saved figures.
+        self.estimated_cost_per_call: float = 0.03  # estimate only
 
     @property
     def similarity_threshold(self) -> float:

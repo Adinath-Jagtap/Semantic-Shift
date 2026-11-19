@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+
+# SQLite cache database (auto-created on run)
+cache_store.db
+
+# Python distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+MANIFEST
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+run_benchmark.py
+# Logs
+*.log
+
+# OS
+Thumbs.db
